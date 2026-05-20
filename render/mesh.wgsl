@@ -7,6 +7,7 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) world_pos: vec3<f32>,
+    @location(2) @interpolate(flat) entity_id: u32,
 };
 
 struct LightData {
@@ -33,7 +34,13 @@ struct MaterialData {
 @group(0) @binding(0) var<uniform> view_proj: mat4x4<f32>;
 @group(1) @binding(0) var<storage, read> models: array<mat4x4<f32>>;
 @group(1) @binding(1) var<storage, read> materials: array<MaterialData>;
+@group(1) @binding(2) var<storage, read> entity_ids: array<u32>;
 @group(2) @binding(0) var<uniform> lights: Lights;
+
+struct FragmentOutput {
+    @location(0) color: vec4<f32>,
+    @location(1) entity_id: u32,
+};
 
 @vertex
 fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32) -> VertexOutput {
@@ -42,11 +49,12 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32)
     out.position = view_proj * world;
     out.color = input.color * materials[instance_index].base_color;
     out.world_pos = world.xyz;
+    out.entity_id = entity_ids[instance_index];
     return out;
 }
 
 @fragment
-fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fragment_main(in: VertexOutput) -> FragmentOutput {
     let normal = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
 
     let ambient = vec3<f32>(0.18, 0.18, 0.2);
@@ -70,5 +78,8 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
         lit = lit + in.color.rgb * light.color * (light.intensity * n_dot_l);
     }
 
-    return vec4<f32>(lit, in.color.a);
+    var out: FragmentOutput;
+    out.color = vec4<f32>(lit, in.color.a);
+    out.entity_id = in.entity_id;
+    return out;
 }

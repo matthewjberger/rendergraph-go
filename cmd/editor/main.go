@@ -87,8 +87,68 @@ func main() {
 			log.Fatal(err)
 		}
 
+		render.ProcessPickingReadback(renderer, worlds.Engine)
+
+		if picking := ecs.Resource[*render.Picking](worlds.Engine); (*picking).Result != nil {
+			result := (*picking).Result
+			(*picking).Result = nil
+			applySelection(worlds.Engine, result.EntityID)
+			glfwWindow.SetTitle(pickTitle(result))
+		}
+
 		app.PostFrame(worlds)
 	}
+}
+
+func pickTitle(result *render.PickResult) string {
+	if result.EntityID == 0 {
+		return "indigo editor — picked: (nothing)"
+	}
+	return "indigo editor — picked entity " + uintToStr(result.EntityID)
+}
+
+// applySelection deselects every currently-selected entity and adds
+// the Selected tag to the entity matching pickedID (if any). The
+// outline post-process picks this up next frame.
+func applySelection(engine *ecs.World, pickedID uint32) {
+	selectedMask := ecs.MaskOf[render.Selected](engine)
+	var toDeselect []ecs.Entity
+	engine.ForEach(selectedMask, 0, func(e ecs.Entity, _ *ecs.Archetype, _ int) {
+		toDeselect = append(toDeselect, e)
+	})
+	for _, e := range toDeselect {
+		ecs.Remove[render.Selected](engine, e)
+	}
+
+	if pickedID == 0 {
+		return
+	}
+	renderMask := ecs.MaskOf[render.RenderMesh](engine)
+	var picked ecs.Entity
+	found := false
+	engine.ForEach(renderMask, 0, func(e ecs.Entity, _ *ecs.Archetype, _ int) {
+		if !found && e.ID == pickedID {
+			picked = e
+			found = true
+		}
+	})
+	if found {
+		ecs.Add[render.Selected](engine, picked)
+	}
+}
+
+func uintToStr(v uint32) string {
+	if v == 0 {
+		return "0"
+	}
+	var buf [12]byte
+	i := len(buf)
+	for v > 0 {
+		i--
+		buf[i] = byte('0' + v%10)
+		v /= 10
+	}
+	return string(buf[i:])
 }
 
 // installInputCallbacks wires GLFW's cursor / mouse-button / scroll
@@ -115,6 +175,12 @@ func installInputCallbacks(glfwWindow *glfw.Window, engine *ecs.World) {
 		switch button {
 		case glfw.MouseButtonLeft:
 			input.LeftDown = pressed
+			if pressed {
+				picking := *ecs.Resource[*render.Picking](engine)
+				if picking != nil {
+					render.QueuePick(picking, uint32(input.MousePosition[0]), uint32(input.MousePosition[1]))
+				}
+			}
 		case glfw.MouseButtonRight:
 			input.RightDown = pressed
 		case glfw.MouseButtonMiddle:

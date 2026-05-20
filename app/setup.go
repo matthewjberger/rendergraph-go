@@ -33,6 +33,7 @@ func NewEngineWorld(renderer *render.Renderer) (*ecs.World, error) {
 	ecs.Register[render.RenderMesh](engine)
 	ecs.Register[render.Material](engine)
 	ecs.Register[render.Light](engine)
+	ecs.Register[render.Selected](engine)
 
 	meshAssets := render.NewMeshAssets()
 	primitives, err := render.RegisterPrimitives(renderer.Device, meshAssets)

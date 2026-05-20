@@ -47,6 +47,7 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 	}
 	ecs.SetResource(engine, render.DefaultCamera())
 	ecs.SetResource(engine, render.DefaultPanOrbitController())
+	ecs.SetResource(engine, render.NewPicking())
 
 	game := ecs.New()
 	ecs.Register[Spinner](game)
@@ -100,7 +101,16 @@ func editorApp() *app.App {
 			if _, err := render.AddMeshPass(renderer); err != nil {
 				log.Fatal(err)
 			}
+			if _, err := render.AddPickingPass(renderer); err != nil {
+				log.Fatal(err)
+			}
+			if _, err := render.AddSelectionMaskPass(renderer); err != nil {
+				log.Fatal(err)
+			}
 			if _, err := render.AddGridPass(renderer); err != nil {
+				log.Fatal(err)
+			}
+			if _, err := render.AddOutlinePass(renderer); err != nil {
 				log.Fatal(err)
 			}
 			_, fxaaOutputID, err := render.AddFxaaPass(renderer)

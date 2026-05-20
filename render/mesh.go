@@ -27,6 +27,7 @@ var meshShader string
 type handleInstances struct {
 	modelBuffer    *wgpu.Buffer
 	materialBuffer *wgpu.Buffer
+	entityIdBuffer *wgpu.Buffer
 	bindGroup      *wgpu.BindGroup
 	capacity       uint32
 
@@ -48,6 +49,10 @@ func releaseHandleInstances(h *handleInstances) {
 	if h.materialBuffer != nil {
 		h.materialBuffer.Release()
 		h.materialBuffer = nil
+	}
+	if h.entityIdBuffer != nil {
+		h.entityIdBuffer.Release()
+		h.entityIdBuffer = nil
 	}
 }
 
@@ -137,6 +142,11 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 			},
 			{
 				Binding:    1,
+				Visibility: wgpu.ShaderStageVertex,
+				Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage},
+			},
+			{
+				Binding:    2,
 				Visibility: wgpu.ShaderStageVertex,
 				Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage},
 			},
@@ -273,10 +283,16 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 		Fragment: &wgpu.FragmentState{
 			Module:     shader,
 			EntryPoint: "fragment_main",
-			Targets: []wgpu.ColorTargetState{{
-				Format:    surfaceFormat,
-				WriteMask: wgpu.ColorWriteMaskAll,
-			}},
+			Targets: []wgpu.ColorTargetState{
+				{
+					Format:    surfaceFormat,
+					WriteMask: wgpu.ColorWriteMaskAll,
+				},
+				{
+					Format:    EntityIdFormat,
+					WriteMask: wgpu.ColorWriteMaskAll,
+				},
+			},
 		},
 	})
 	if err != nil {
@@ -286,13 +302,19 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 
 	return &Pass{
 		Name:    "mesh",
-		Writes:  []string{"color", "depth"},
+		Writes:  []string{"color", "depth", "entity_id"},
 		State:   state,
 		Prepare: meshPrepare,
 		Execute: meshExecute,
 		Release: meshRelease,
 	}, nil
 }
+
+// EntityIdFormat is the texture format used for the mesh pass's
+// entity-ID render target. A single 32-bit unsigned integer per pixel
+// holds the [ecs.Entity.ID] of whatever covered that pixel last (0 if
+// nothing did).
+const EntityIdFormat = wgpu.TextureFormatR32Uint
 
 // meshPrepare runs every frame:
 //  1. Write the camera's view × projection into the uniform.
@@ -358,6 +380,9 @@ func meshPrepare(s any, context *PassContext) error {
 				material.BaseColor = mat.BaseColor
 			}
 			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.materialBuffer, uint64(slot)*materialDataSize, bytesOf(&material))
+
+			entityID := entity.ID
+			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.entityIdBuffer, uint64(slot)*4, bytesOf(&entityID))
 		},
 	)
 
@@ -431,6 +456,10 @@ func meshExecute(s any, context *PassContext) error {
 	if err != nil {
 		return err
 	}
+	entityIdAttachment, err := context.ColorAttachment("entity_id")
+	if err != nil {
+		return err
+	}
 	depthAttachment, err := context.DepthAttachment("depth")
 	if err != nil {
 		return err
@@ -438,7 +467,7 @@ func meshExecute(s any, context *PassContext) error {
 
 	pass := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		Label:                  "mesh",
-		ColorAttachments:       []wgpu.RenderPassColorAttachment{colorAttachment},
+		ColorAttachments:       []wgpu.RenderPassColorAttachment{colorAttachment, entityIdAttachment},
 		DepthStencilAttachment: &depthAttachment,
 	})
 	pass.SetPipeline(state.pipeline)
@@ -554,6 +583,9 @@ func releaseEntitySlot(state *meshPassState, context *PassContext, entity ecs.En
 			material.BaseColor = mat.BaseColor
 		}
 		writeBuffer(context.Device, context.Queue, context.Encoder, bucket.materialBuffer, uint64(slot)*materialDataSize, bytesOf(&material))
+
+		movedID := moved.ID
+		writeBuffer(context.Device, context.Queue, context.Encoder, bucket.entityIdBuffer, uint64(slot)*4, bytesOf(&movedID))
 	}
 	bucket.slotEntity = bucket.slotEntity[:last]
 	delete(bucket.entityToSlot, entity)
@@ -575,7 +607,7 @@ const minHandleCapacity uint32 = 64
 // reuploaded.
 func ensureHandleCapacity(h *handleInstances, device *wgpu.Device, layout *wgpu.BindGroupLayout) error {
 	required := uint32(len(h.slotEntity))
-	if h.capacity >= required && h.modelBuffer != nil && h.materialBuffer != nil {
+	if h.capacity >= required && h.modelBuffer != nil && h.materialBuffer != nil && h.entityIdBuffer != nil {
 		return nil
 	}
 	newCapacity := h.capacity
@@ -606,17 +638,29 @@ func ensureHandleCapacity(h *handleInstances, device *wgpu.Device, layout *wgpu.
 		modelBuffer.Release()
 		return fmt.Errorf("mesh pass: material buffer: %w", err)
 	}
+	entityIdBuffer, err := device.CreateBuffer(&wgpu.BufferDescriptor{
+		Label: "mesh entity_id buffer",
+		Size:  uint64(newCapacity) * 4,
+		Usage: wgpu.BufferUsageStorage | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		modelBuffer.Release()
+		materialBuffer.Release()
+		return fmt.Errorf("mesh pass: entity_id buffer: %w", err)
+	}
 	bindGroup, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 		Label:  "mesh per-handle bind group",
 		Layout: layout,
 		Entries: []wgpu.BindGroupEntry{
 			{Binding: 0, Buffer: modelBuffer, Offset: 0, Size: wgpu.WholeSize},
 			{Binding: 1, Buffer: materialBuffer, Offset: 0, Size: wgpu.WholeSize},
+			{Binding: 2, Buffer: entityIdBuffer, Offset: 0, Size: wgpu.WholeSize},
 		},
 	})
 	if err != nil {
 		modelBuffer.Release()
 		materialBuffer.Release()
+		entityIdBuffer.Release()
 		return fmt.Errorf("mesh pass: per-handle bind group: %w", err)
 	}
 	if h.bindGroup != nil {
@@ -628,8 +672,12 @@ func ensureHandleCapacity(h *handleInstances, device *wgpu.Device, layout *wgpu.
 	if h.materialBuffer != nil {
 		h.materialBuffer.Release()
 	}
+	if h.entityIdBuffer != nil {
+		h.entityIdBuffer.Release()
+	}
 	h.modelBuffer = modelBuffer
 	h.materialBuffer = materialBuffer
+	h.entityIdBuffer = entityIdBuffer
 	h.bindGroup = bindGroup
 	h.capacity = newCapacity
 	return nil
