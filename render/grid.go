@@ -189,6 +189,10 @@ func gridPrepare(s any, context *PassContext) error {
 
 func gridExecute(s any, context *PassContext) error {
 	state := s.(*gridPassState)
+	settings := ecs.Resource[GraphicsSettings](context.World)
+	if !settings.ShowGrid {
+		return nil
+	}
 
 	colorAttachment, err := context.ColorAttachment("color")
 	if err != nil {

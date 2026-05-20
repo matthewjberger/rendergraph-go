@@ -152,6 +152,27 @@ func installCanvasInputListeners(canvas js.Value, engine *ecs.World) {
 		}
 		return nil
 	}))
+
+	js.Global().Get("window").Call("addEventListener", "keydown", js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) == 0 {
+			return nil
+		}
+		event := args[0]
+		key := event.Get("key").String()
+		if len(key) != 1 {
+			return nil
+		}
+		r := []rune(key)[0]
+		if r >= 'a' && r <= 'z' {
+			r -= 'a' - 'A'
+		}
+		if r < 'A' || r > 'Z' {
+			return nil
+		}
+		input := ecs.Resource[render.Input](engine)
+		input.KeysJustDown = append(input.KeysJustDown, r)
+		return nil
+	}))
 }
 
 func setMouseButton(engine *ecs.World, button int, pressed bool) {

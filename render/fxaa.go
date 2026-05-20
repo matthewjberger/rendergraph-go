@@ -158,6 +158,7 @@ func NewFxaaPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat) (*Pass, 
 func fxaaPrepare(s any, context *PassContext) error {
 	state := s.(*fxaaPassState)
 	viewport := ecs.Resource[window.Window](context.World).Viewport
+	settings := ecs.Resource[GraphicsSettings](context.World)
 	width := float32(viewport.Width)
 	height := float32(viewport.Height)
 	if width <= 0 {
@@ -166,10 +167,14 @@ func fxaaPrepare(s any, context *PassContext) error {
 	if height <= 0 {
 		height = 1
 	}
+	enabled := float32(0)
+	if settings.FxaaEnabled {
+		enabled = 1
+	}
 	params := fxaaParams{
 		TexelX:          1.0 / width,
 		TexelY:          1.0 / height,
-		Enabled:         1.0,
+		Enabled:         enabled,
 		SubpixelQuality: 0.75,
 	}
 	context.Queue.WriteBuffer(state.paramsBuffer, 0, bytesOf(&params))

@@ -74,6 +74,7 @@ func buildWorlds(renderer *render.Renderer) (Worlds, *app.App) {
 	ecs.SetResource(engine, render.MeshAssetsResource{Assets: renderer.Meshes})
 	ecs.SetResource(engine, render.Input{})
 	ecs.SetResource(engine, render.DefaultPanOrbitController())
+	ecs.SetResource(engine, render.DefaultGraphicsSettings())
 	ecs.SetResource(engine, transform.NewPropagationState())
 
 	game := ecs.New()
@@ -83,6 +84,7 @@ func buildWorlds(renderer *render.Renderer) (Worlds, *app.App) {
 	ecs.SetResource(game, EngineRef{World: engine})
 
 	engineSchedule := ecs.NewSchedule()
+	engineSchedule.Push("graphics_toggles", render.UpdateGraphicsToggles)
 	engineSchedule.Push("pan_orbit_camera", render.UpdatePanOrbitCamera)
 	engineSchedule.Push("transform_propagation", transform.UpdateGlobalTransforms)
 

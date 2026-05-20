@@ -168,6 +168,7 @@ func skyPrepare(s any, context *PassContext) error {
 
 func skyExecute(s any, context *PassContext) error {
 	state := s.(*skyPassState)
+	settings := ecs.Resource[GraphicsSettings](context.World)
 
 	colorAttachment, err := context.ColorAttachment("color")
 	if err != nil {
@@ -178,9 +179,11 @@ func skyExecute(s any, context *PassContext) error {
 		Label:            "sky",
 		ColorAttachments: []wgpu.RenderPassColorAttachment{colorAttachment},
 	})
-	pass.SetPipeline(state.pipeline)
-	pass.SetBindGroup(0, state.bindGroup, nil)
-	pass.Draw(3, 1, 0, 0)
+	if settings.ShowSky {
+		pass.SetPipeline(state.pipeline)
+		pass.SetBindGroup(0, state.bindGroup, nil)
+		pass.Draw(3, 1, 0, 0)
+	}
 	pass.End()
 	pass.Release()
 	return nil

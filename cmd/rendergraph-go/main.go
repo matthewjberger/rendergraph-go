@@ -125,8 +125,16 @@ func installInputCallbacks(glfwWindow *glfw.Window, engine *ecs.World) {
 	})
 
 	glfwWindow.SetKeyCallback(func(w *glfw.Window, key glfw.Key, _ int, action glfw.Action, _ glfw.ModifierKey) {
-		if key == glfw.KeyEscape && action == glfw.Press {
+		if action != glfw.Press {
+			return
+		}
+		if key == glfw.KeyEscape {
 			w.SetShouldClose(true)
+			return
+		}
+		if key >= glfw.KeyA && key <= glfw.KeyZ {
+			input := ecs.Resource[render.Input](engine)
+			input.KeysJustDown = append(input.KeysJustDown, rune(key))
 		}
 	})
 }
