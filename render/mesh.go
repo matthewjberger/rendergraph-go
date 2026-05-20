@@ -238,7 +238,7 @@ func meshPrepare(s any, context *PassContext) error {
 
 	camera := ecs.Resource[Camera](context.World)
 	viewProjection := camera.ViewProjection(state.aspectFn())
-	context.Queue.WriteBuffer(state.viewProjBuffer, 0, mat4Bytes(&viewProjection))
+	context.Queue.WriteBuffer(state.viewProjBuffer, 0, bytesOf(&viewProjection))
 
 	for _, event := range ecs.ReadEvents[ecs.EntityDespawned](context.World) {
 		releaseEntitySlot(state, context, event.Entity)
@@ -271,7 +271,7 @@ func meshPrepare(s any, context *PassContext) error {
 			return
 		}
 		matrix := globals[index].Matrix
-		context.Queue.WriteBuffer(bucket.buffer, uint64(slot)*matrixSize, mat4Bytes(&matrix))
+		context.Queue.WriteBuffer(bucket.buffer, uint64(slot)*matrixSize, bytesOf(&matrix))
 	})
 
 	ecs.IterChanged1[transform.GlobalTransform](
@@ -291,7 +291,7 @@ func meshPrepare(s any, context *PassContext) error {
 			if !ok {
 				return
 			}
-			context.Queue.WriteBuffer(bucket.buffer, uint64(slot)*matrixSize, mat4Bytes(&global.Matrix))
+			context.Queue.WriteBuffer(bucket.buffer, uint64(slot)*matrixSize, bytesOf(&global.Matrix))
 		},
 	)
 
@@ -318,37 +318,19 @@ func meshExecute(s any, context *PassContext) error {
 
 	assets := ecs.Resource[MeshAssetsResource](context.World).Assets
 
-	colorView, colorLoad, colorStore, clearColor, err := context.ColorAttachment("color")
+	colorAttachment, err := context.ColorAttachment("color")
 	if err != nil {
 		return err
 	}
-	depthView, depthLoad, depthStore, clearDepth, err := context.DepthAttachment("depth")
+	depthAttachment, err := context.DepthAttachment("depth")
 	if err != nil {
 		return err
-	}
-
-	colorAttachment := wgpu.RenderPassColorAttachment{
-		View:    colorView,
-		LoadOp:  colorLoad,
-		StoreOp: colorStore,
-	}
-	if colorLoad == wgpu.LoadOpClear {
-		colorAttachment.ClearValue = clearColor
-	}
-
-	depthAttachment := &wgpu.RenderPassDepthStencilAttachment{
-		View:         depthView,
-		DepthLoadOp:  depthLoad,
-		DepthStoreOp: depthStore,
-	}
-	if depthLoad == wgpu.LoadOpClear {
-		depthAttachment.DepthClearValue = clearDepth
 	}
 
 	pass := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		Label:                  "mesh",
 		ColorAttachments:       []wgpu.RenderPassColorAttachment{colorAttachment},
-		DepthStencilAttachment: depthAttachment,
+		DepthStencilAttachment: &depthAttachment,
 	})
 	pass.SetPipeline(state.pipeline)
 	pass.SetBindGroup(0, state.viewProjBindGroup, nil)
@@ -416,7 +398,7 @@ func releaseEntitySlot(state *meshPassState, context *PassContext, entity ecs.En
 		bucket.slotEntity[slot] = moved
 		bucket.entityToSlot[moved] = slot
 		if global, ok := ecs.Get[transform.GlobalTransform](context.World, moved); ok {
-			context.Queue.WriteBuffer(bucket.buffer, uint64(slot)*matrixSize, mat4Bytes(&global.Matrix))
+			context.Queue.WriteBuffer(bucket.buffer, uint64(slot)*matrixSize, bytesOf(&global.Matrix))
 		}
 	}
 	bucket.slotEntity = bucket.slotEntity[:last]
@@ -485,10 +467,4 @@ func ensureHandleCapacity(h *handleInstances, device *wgpu.Device, layout *wgpu.
 	h.bindGroup = bindGroup
 	h.capacity = newCapacity
 	return nil
-}
-
-// mat4Bytes returns a byte slice over the matrix's memory without
-// allocating. mgl32.Mat4 is [16]float32 = 64 bytes contiguous.
-func mat4Bytes(m *mgl32.Mat4) []byte {
-	return unsafe.Slice((*byte)(unsafe.Pointer(m)), unsafe.Sizeof(*m))
 }

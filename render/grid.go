@@ -183,44 +183,26 @@ func gridPrepare(s any, context *PassContext) error {
 		GridMinPixels: 2.0,
 		GridCellSize:  0.025,
 	}
-	context.Queue.WriteBuffer(state.uniformBuffer, 0, gridUniformBytes(&uniform))
+	context.Queue.WriteBuffer(state.uniformBuffer, 0, bytesOf(&uniform))
 	return nil
 }
 
 func gridExecute(s any, context *PassContext) error {
 	state := s.(*gridPassState)
 
-	colorView, colorLoad, colorStore, clearColor, err := context.ColorAttachment("color")
+	colorAttachment, err := context.ColorAttachment("color")
 	if err != nil {
 		return err
 	}
-	depthView, depthLoad, depthStore, clearDepth, err := context.DepthAttachment("depth")
+	depthAttachment, err := context.DepthAttachment("depth")
 	if err != nil {
 		return err
-	}
-
-	colorAttachment := wgpu.RenderPassColorAttachment{
-		View:    colorView,
-		LoadOp:  colorLoad,
-		StoreOp: colorStore,
-	}
-	if colorLoad == wgpu.LoadOpClear {
-		colorAttachment.ClearValue = clearColor
-	}
-
-	depthAttachment := &wgpu.RenderPassDepthStencilAttachment{
-		View:         depthView,
-		DepthLoadOp:  depthLoad,
-		DepthStoreOp: depthStore,
-	}
-	if depthLoad == wgpu.LoadOpClear {
-		depthAttachment.DepthClearValue = clearDepth
 	}
 
 	pass := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		Label:                  "grid",
 		ColorAttachments:       []wgpu.RenderPassColorAttachment{colorAttachment},
-		DepthStencilAttachment: depthAttachment,
+		DepthStencilAttachment: &depthAttachment,
 	})
 	pass.SetPipeline(state.pipeline)
 	pass.SetBindGroup(0, state.bindGroup, nil)
@@ -244,8 +226,4 @@ func gridRelease(s any) {
 	if state.bindGroupLayout != nil {
 		state.bindGroupLayout.Release()
 	}
-}
-
-func gridUniformBytes(u *gridUniform) []byte {
-	return unsafe.Slice((*byte)(unsafe.Pointer(u)), unsafe.Sizeof(*u))
 }

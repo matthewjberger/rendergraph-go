@@ -170,7 +170,7 @@ func fxaaPrepare(s any, context *PassContext) error {
 		Enabled:         1.0,
 		SubpixelQuality: 0.75,
 	}
-	context.Queue.WriteBuffer(state.paramsBuffer, 0, fxaaParamsBytes(&params))
+	context.Queue.WriteBuffer(state.paramsBuffer, 0, bytesOf(&params))
 	return nil
 }
 
@@ -197,17 +197,9 @@ func fxaaExecute(s any, context *PassContext) error {
 		state.bindGroup = group
 	}
 
-	outputView, outputLoad, outputStore, outputClear, err := context.ColorAttachment("output")
+	colorAttachment, err := context.ColorAttachment("output")
 	if err != nil {
 		return err
-	}
-	colorAttachment := wgpu.RenderPassColorAttachment{
-		View:    outputView,
-		LoadOp:  outputLoad,
-		StoreOp: outputStore,
-	}
-	if outputLoad == wgpu.LoadOpClear {
-		colorAttachment.ClearValue = outputClear
 	}
 
 	pass := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
@@ -247,8 +239,4 @@ func fxaaRelease(s any) {
 	if state.bindGroupLayout != nil {
 		state.bindGroupLayout.Release()
 	}
-}
-
-func fxaaParamsBytes(p *fxaaParams) []byte {
-	return unsafe.Slice((*byte)(unsafe.Pointer(p)), unsafe.Sizeof(*p))
 }

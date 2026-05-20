@@ -77,18 +77,21 @@ func (c *PassContext) TextureView(slot string) (*wgpu.TextureView, error) {
 	return handle.View, nil
 }
 
-// ColorAttachment returns the view + load/store ops for slot. The load op
-// is Clear iff this is the first writer of the resource and the descriptor
-// declared a clear color, else Load.
-func (c *PassContext) ColorAttachment(slot string) (*wgpu.TextureView, wgpu.LoadOp, wgpu.StoreOp, wgpu.Color, error) {
+// ColorAttachment returns a fully-prepared
+// [wgpu.RenderPassColorAttachment] for slot, ready to drop into a
+// render-pass descriptor. The load op is Clear iff this pass is the
+// first writer of the resource and the descriptor declared a clear
+// color, else Load. ClearValue is always populated (wgpu ignores it
+// when the load op is Load).
+func (c *PassContext) ColorAttachment(slot string) (wgpu.RenderPassColorAttachment, error) {
 	id, ok := c.Slots[slot]
 	if !ok {
-		return nil, 0, 0, wgpu.Color{}, fmt.Errorf("render: pass slot %q not bound", slot)
+		return wgpu.RenderPassColorAttachment{}, fmt.Errorf("render: pass slot %q not bound", slot)
 	}
 	handle := c.Resources.Handle(id)
 	descriptor := c.Resources.Descriptor(id)
 	if handle.View == nil {
-		return nil, 0, 0, wgpu.Color{}, fmt.Errorf("render: color slot %q (%s) has no view", slot, descriptor.Name)
+		return wgpu.RenderPassColorAttachment{}, fmt.Errorf("render: color slot %q (%s) has no view", slot, descriptor.Name)
 	}
 
 	loadOp := wgpu.LoadOpLoad
@@ -98,20 +101,28 @@ func (c *PassContext) ColorAttachment(slot string) (*wgpu.TextureView, wgpu.Load
 		loadOp = wgpu.LoadOpClear
 		clear = *descriptor.ClearColor
 	}
-	return handle.View, loadOp, wgpu.StoreOpStore, clear, nil
+	return wgpu.RenderPassColorAttachment{
+		View:       handle.View,
+		LoadOp:     loadOp,
+		StoreOp:    wgpu.StoreOpStore,
+		ClearValue: clear,
+	}, nil
 }
 
-// DepthAttachment returns the view + load/store ops + clear value for a
-// depth slot. Same first-write rule as [PassContext.ColorAttachment].
-func (c *PassContext) DepthAttachment(slot string) (*wgpu.TextureView, wgpu.LoadOp, wgpu.StoreOp, float32, error) {
+// DepthAttachment returns a fully-prepared
+// [wgpu.RenderPassDepthStencilAttachment] for slot. Same first-write
+// clear rule as [PassContext.ColorAttachment]. Caller takes the
+// address to drop it into a render-pass descriptor's
+// DepthStencilAttachment field.
+func (c *PassContext) DepthAttachment(slot string) (wgpu.RenderPassDepthStencilAttachment, error) {
 	id, ok := c.Slots[slot]
 	if !ok {
-		return nil, 0, 0, 0, fmt.Errorf("render: pass slot %q not bound", slot)
+		return wgpu.RenderPassDepthStencilAttachment{}, fmt.Errorf("render: pass slot %q not bound", slot)
 	}
 	handle := c.Resources.Handle(id)
 	descriptor := c.Resources.Descriptor(id)
 	if handle.View == nil {
-		return nil, 0, 0, 0, fmt.Errorf("render: depth slot %q (%s) has no view", slot, descriptor.Name)
+		return wgpu.RenderPassDepthStencilAttachment{}, fmt.Errorf("render: depth slot %q (%s) has no view", slot, descriptor.Name)
 	}
 
 	loadOp := wgpu.LoadOpLoad
@@ -121,7 +132,12 @@ func (c *PassContext) DepthAttachment(slot string) (*wgpu.TextureView, wgpu.Load
 		loadOp = wgpu.LoadOpClear
 		clear = *descriptor.ClearDepth
 	}
-	return handle.View, loadOp, wgpu.StoreOpStore, clear, nil
+	return wgpu.RenderPassDepthStencilAttachment{
+		View:            handle.View,
+		DepthLoadOp:     loadOp,
+		DepthStoreOp:    wgpu.StoreOpStore,
+		DepthClearValue: clear,
+	}, nil
 }
 
 // Pass is the data-oriented analogue of nightshade's PassNode trait.

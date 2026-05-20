@@ -152,18 +152,9 @@ func presentExecute(s any, context *PassContext) error {
 		state.bindGroup = group
 	}
 
-	outputView, outputLoad, outputStore, outputClear, err := context.ColorAttachment("output")
+	colorAttachment, err := context.ColorAttachment("output")
 	if err != nil {
 		return err
-	}
-
-	colorAttachment := wgpu.RenderPassColorAttachment{
-		View:    outputView,
-		LoadOp:  outputLoad,
-		StoreOp: outputStore,
-	}
-	if outputLoad == wgpu.LoadOpClear {
-		colorAttachment.ClearValue = outputClear
 	}
 
 	pass := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
