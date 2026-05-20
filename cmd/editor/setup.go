@@ -19,13 +19,12 @@ import (
 	"indigo/window"
 )
 
-// HudHandles holds the UI entities the editor wants to mutate every
-// frame (status label + clear button). Stored as a resource on the
-// engine world so per-frame systems can find them without hand-
-// rolling lookups.
 type HudHandles struct {
-	StatusLabel ecs.Entity
-	ClearButton ecs.Entity
+	StatusLabel     ecs.Entity
+	ClearButton     ecs.Entity
+	TranslateButton ecs.Entity
+	RotateButton    ecs.Entity
+	ScaleButton     ecs.Entity
 }
 
 func setupLogging() {
@@ -45,11 +44,6 @@ func setupLogging() {
 	}
 }
 
-// buildWorlds creates the engine + game worlds, installs editor-
-// specific resources on top of the engine defaults, builds two
-// schedules, compiles the render graph, and spawns the demo scene.
-// Returns [app.Worlds] plus the editor [app.App] (its lifecycle hooks
-// drive the render-graph wiring).
 func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 	engine, err := app.NewEngineWorld(renderer)
 	if err != nil {
@@ -58,6 +52,7 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 	ecs.SetResource(engine, render.DefaultCamera())
 	ecs.SetResource(engine, render.DefaultPanOrbitController())
 	ecs.SetResource(engine, render.NewPicking())
+	ecs.SetResource(engine, render.NewGizmos())
 
 	game := ecs.New()
 	ecs.Register[Spinner](game)
@@ -72,11 +67,15 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 
 	engineSchedule := ecs.NewSchedule()
 	engineSchedule.Push("graphics_toggles", render.UpdateGraphicsToggles)
+	engineSchedule.Push("gizmos", render.UpdateGizmos)
 	engineSchedule.Push("pan_orbit_camera", render.UpdatePanOrbitCamera)
 	engineSchedule.Push("transform_propagation", transform.UpdateGlobalTransforms)
 
+	// Editor leaves cubes stationary; manipulation happens via
+	// gizmos rather than the spinner system. advanceSpinners is
+	// kept around for reference but not scheduled.
 	gameSchedule := ecs.NewSchedule()
-	gameSchedule.Push("spinner", advanceSpinners)
+	_ = advanceSpinners
 
 	worlds := app.Worlds{
 		Engine:         engine,
@@ -100,6 +99,7 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 		primitives.UnitQuad,
 		primitives.UnitCube,
 	})
+
 	if err := renderer.Graph.Compile(renderer.Device); err != nil {
 		log.Fatal(err)
 	}
@@ -134,6 +134,9 @@ func editorApp() *app.App {
 			if err != nil {
 				log.Fatal(err)
 			}
+			if _, err := render.AddGizmoPass(renderer, fxaaOutputID); err != nil {
+				log.Fatal(err)
+			}
 			if _, err := render.AddUiQuadPass(renderer, fxaaOutputID); err != nil {
 				log.Fatal(err)
 			}
@@ -147,13 +150,24 @@ func editorApp() *app.App {
 	}
 }
 
-// buildHud constructs the editor's heads-up display tree on the UI
-// world: a translucent panel anchored to the bottom-left holding a
-// status label and a Clear button. Returns the entity handles so
-// per-frame systems can update the label text and react to button
-// clicks.
 func buildHud(world *ecs.World) HudHandles {
 	b := ui.NewBuilder(world)
+
+	topBar := b.Node(ui.Node{
+		X:       0,
+		Y:       12,
+		Width:   468,
+		Height:  44,
+		Anchor:  ui.AnchorTopCenter,
+		Layout:  ui.LayoutRow,
+		Padding: 6,
+		Spacing: 6,
+	}).Color(ui.Color{RGBA: [4]float32{0.08, 0.09, 0.12, 0.9}}).Entity()
+	b.Push(topBar)
+	translate := buildModeButton(b, "TRANSLATE")
+	rotate := buildModeButton(b, "ROTATE")
+	scale := buildModeButton(b, "SCALE")
+	b.Pop()
 
 	panel := b.Node(ui.Node{
 		X:       16,
@@ -183,7 +197,24 @@ func buildHud(world *ecs.World) HudHandles {
 		}).Entity()
 	b.Pop()
 
-	return HudHandles{StatusLabel: label, ClearButton: clear}
+	return HudHandles{
+		StatusLabel:     label,
+		ClearButton:     clear,
+		TranslateButton: translate,
+		RotateButton:    rotate,
+		ScaleButton:     scale,
+	}
+}
+
+func buildModeButton(b *ui.Builder, text string) ecs.Entity {
+	return b.Node(ui.Node{Width: 144, Height: 32}).
+		Color(ui.Color{RGBA: [4]float32{0.18, 0.21, 0.28, 1}}).
+		Interactive().
+		Text(ui.Text{
+			Content: text,
+			Color:   [4]float32{0.95, 0.96, 0.98, 1},
+			Scale:   1.6,
+		}).Entity()
 }
 
 // initializeWorldEntities spawns a 5x5 grid of engine entities

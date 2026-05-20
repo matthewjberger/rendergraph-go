@@ -1,16 +1,14 @@
 package main
 
 import (
+	"strconv"
+
 	"indigo/app"
 	"indigo/ecs"
 	"indigo/render"
 	"indigo/ui"
 )
 
-// syncUiPointer copies the engine-side mouse position + left button
-// edges into the UI world's [ui.PointerState] before TickFrame runs,
-// so the UI interaction system sees this frame's pointer. Called by
-// both the native and wasm entry points.
 func syncUiPointer(worlds app.Worlds) {
 	if worlds.UI == nil {
 		return
@@ -25,24 +23,27 @@ func syncUiPointer(worlds app.Worlds) {
 	pointer.LeftJustUp = !input.LeftDown && prevDown
 }
 
-// handleUiClicks drains EntityClicked events from the UI world and
-// dispatches them. The editor's only interactive widget today is the
-// Clear button, which deselects whatever entity was picked.
 func handleUiClicks(worlds app.Worlds) {
 	if worlds.UI == nil {
 		return
 	}
 	hud := ecs.Resource[HudHandles](worlds.Engine)
+	gizmo := *ecs.Resource[*render.Gizmos](worlds.Engine)
 	for _, evt := range ecs.DrainEvents[ui.EntityClicked](worlds.UI) {
-		if evt.Entity == hud.ClearButton {
+		switch evt.Entity {
+		case hud.ClearButton:
 			applySelection(worlds.Engine, 0)
 			refreshHudLabel(worlds, 0)
+		case hud.TranslateButton:
+			gizmo.Mode = render.GizmoTranslate
+		case hud.RotateButton:
+			gizmo.Mode = render.GizmoRotate
+		case hud.ScaleButton:
+			gizmo.Mode = render.GizmoScale
 		}
 	}
 }
 
-// refreshHudLabel rewrites the status label's Text.Content to match
-// the latest pick result. Passes nothing when entityID==0.
 func refreshHudLabel(worlds app.Worlds, entityID uint32) {
 	if worlds.UI == nil {
 		return
@@ -55,20 +56,29 @@ func refreshHudLabel(worlds app.Worlds, entityID uint32) {
 	if entityID == 0 {
 		label.Content = "Pick a cube"
 	} else {
-		label.Content = "Selected " + strconvUint(entityID)
+		label.Content = "Selected " + strconv.FormatUint(uint64(entityID), 10)
 	}
 }
 
-func strconvUint(v uint32) string {
-	if v == 0 {
-		return "0"
+func refreshModeButtons(worlds app.Worlds) {
+	if worlds.UI == nil {
+		return
 	}
-	var buf [10]byte
-	i := len(buf)
-	for v > 0 {
-		i--
-		buf[i] = byte('0' + v%10)
-		v /= 10
+	hud := ecs.Resource[HudHandles](worlds.Engine)
+	gizmo := *ecs.Resource[*render.Gizmos](worlds.Engine)
+	setModeColor(worlds.UI, hud.TranslateButton, gizmo.Mode == render.GizmoTranslate)
+	setModeColor(worlds.UI, hud.RotateButton, gizmo.Mode == render.GizmoRotate)
+	setModeColor(worlds.UI, hud.ScaleButton, gizmo.Mode == render.GizmoScale)
+}
+
+func setModeColor(world *ecs.World, entity ecs.Entity, active bool) {
+	color, ok := ecs.GetMut[ui.Color](world, entity)
+	if !ok {
+		return
 	}
-	return string(buf[i:])
+	if active {
+		color.RGBA = [4]float32{0.22, 0.5, 0.86, 1}
+	} else {
+		color.RGBA = [4]float32{0.18, 0.21, 0.28, 1}
+	}
 }

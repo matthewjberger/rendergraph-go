@@ -1,24 +1,38 @@
 package main
 
 import (
-	"strconv"
-
+	"indigo/app"
 	"indigo/ecs"
 	"indigo/render"
+	"indigo/ui"
 )
 
-// pickTitle formats the window title to reflect the latest pick
-// result. Used by both native and wasm entry points.
-func pickTitle(result *render.PickResult) string {
-	if result.EntityID == 0 {
-		return "indigo editor, picked: (nothing)"
+// handlePickResult routes the pick result, except when a gizmo
+// drag is active, the pointer is over UI, or the pointer is over
+// a gizmo axis - in all three cases the pick lands on whatever
+// scene mesh was behind the overlay and changing selection would
+// be wrong.
+func handlePickResult(worlds app.Worlds, pickedID uint32) {
+	gizmo := *ecs.Resource[*render.Gizmos](worlds.Engine)
+	if gizmo != nil && gizmo.Dragging {
+		return
 	}
-	return "indigo editor, picked entity " + strconv.FormatUint(uint64(result.EntityID), 10)
+	if worlds.UI != nil {
+		pointer := ecs.Resource[ui.PointerState](worlds.UI)
+		if pointer.OverUI {
+			return
+		}
+	}
+	if gizmo != nil && gizmo.HoverAxis >= 0 {
+		return
+	}
+	applySelection(worlds.Engine, pickedID)
+	refreshHudLabel(worlds, pickedID)
 }
 
-// applySelection deselects every currently-selected entity and adds
-// the Selected tag to the entity matching pickedID (if any). The
-// outline post-process picks this up next frame.
+// applySelection clears every existing [render.Selected] tag, then
+// tags the entity whose ID matches pickedID. ID 0 means "picked
+// nothing" and just clears.
 func applySelection(engine *ecs.World, pickedID uint32) {
 	selectedMask := ecs.MaskOf[render.Selected](engine)
 	var toDeselect []ecs.Entity

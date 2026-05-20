@@ -24,13 +24,11 @@ func NewWorld(viewportWidth, viewportHeight uint32) *ecs.World {
 	return world
 }
 
-// NewSchedule returns a [ecs.Schedule] pre-loaded with the standard
-// UI systems in the right order: interaction first (so widgets react
-// to the click that happened this frame), then layout (so the
-// renderer sees the latest Resolved rectangles).
+// NewSchedule returns the standard UI schedule with layout before
+// interaction so the hit test queries this frame's Resolved rects.
 func NewSchedule() *ecs.Schedule {
 	sched := ecs.NewSchedule()
-	sched.Push("ui_interaction", InteractionSystem)
 	sched.Push("ui_layout", LayoutSystem)
+	sched.Push("ui_interaction", InteractionSystem)
 	return sched
 }

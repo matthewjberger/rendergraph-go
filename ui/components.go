@@ -34,6 +34,8 @@ const (
 	AnchorBottomLeft
 	AnchorBottomRight
 	AnchorCenter
+	AnchorTopCenter
+	AnchorBottomCenter
 )
 
 // LayoutMode controls how a Node arranges its children. None leaves

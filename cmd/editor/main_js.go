@@ -87,6 +87,7 @@ func main() {
 
 		app.TickFrame(worlds, demo, delta)
 		handleUiClicks(worlds)
+		refreshModeButtons(worlds)
 
 		if err := render.RenderFrame(renderer, worlds.Engine); err != nil {
 			js.Global().Get("console").Call("error", "render error: "+err.Error())
@@ -97,9 +98,7 @@ func main() {
 		if picking := ecs.Resource[*render.Picking](worlds.Engine); (*picking).Result != nil {
 			result := (*picking).Result
 			(*picking).Result = nil
-			applySelection(worlds.Engine, result.EntityID)
-			doc.Set("title", pickTitle(result))
-			refreshHudLabel(worlds, result.EntityID)
+			handlePickResult(worlds, result.EntityID)
 		}
 
 		app.PostFrame(worlds)

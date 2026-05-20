@@ -85,11 +85,11 @@ func TickFrame(worlds Worlds, hooks *App, delta float32) {
 		window.Advance(&ecs.Resource[window.Window](worlds.UI).Timing, delta)
 	}
 
-	worlds.GameSchedule.Run(worlds.Game)
-	worlds.EngineSchedule.Run(worlds.Engine)
 	if worlds.UI != nil && worlds.UISchedule != nil {
 		worlds.UISchedule.Run(worlds.UI)
 	}
+	worlds.GameSchedule.Run(worlds.Game)
+	worlds.EngineSchedule.Run(worlds.Engine)
 
 	if hooks != nil {
 		if hooks.RunSystems != nil {

@@ -7,6 +7,7 @@ import (
 
 	"indigo/ecs"
 	"indigo/transform"
+	"indigo/ui"
 	"indigo/window"
 )
 
@@ -100,9 +101,33 @@ func UpdatePanOrbitCamera(world *ecs.World) {
 	yFov := camera.FovYRadians
 	delta := w.Timing.DeltaSeconds
 
-	applyPanOrbitInput(controller, input, viewport, yFov)
+	if !mouseCapturedByOverlay(world) {
+		applyPanOrbitInput(controller, input, viewport, yFov)
+	}
 	applyPanOrbitSmoothing(controller, delta)
 	writePanOrbitCamera(controller, camera)
+}
+
+// mouseCapturedByOverlay reports whether a gizmo handle or HUD
+// widget is receiving this frame's pointer. Pan-orbit skips input
+// in that case so left-button drag of a handle doesn't also orbit.
+func mouseCapturedByOverlay(world *ecs.World) bool {
+	if ecs.HasResource[*Gizmos](world) {
+		g := *ecs.Resource[*Gizmos](world)
+		if g != nil && (g.Dragging || g.HoverAxis >= 0) {
+			return true
+		}
+	}
+	if ecs.HasResource[ui.WorldRef](world) {
+		uiWorld := ecs.Resource[ui.WorldRef](world).World
+		if uiWorld != nil && ecs.HasResource[ui.PointerState](uiWorld) {
+			pointer := ecs.Resource[ui.PointerState](uiWorld)
+			if pointer.OverUI {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func applyPanOrbitInput(controller *PanOrbitController, input *Input, viewport transform.Vec2, yFov float32) {

@@ -8,11 +8,17 @@ import (
 // consumption: position in pixel coords (viewport-relative) plus
 // down/up edges for the primary button. The platform main loop
 // copies this from [render.Input] into the UI world once per frame.
+//
+// OverUI is updated by [InteractionSystem] each frame: true while
+// the pointer is over any Interactive UI node. Apps consult this
+// (typically from a pick-result handler) to suppress 3D selection
+// when the user clicks the HUD.
 type PointerState struct {
 	X, Y         float32
 	LeftDown     bool
 	LeftJustDown bool
 	LeftJustUp   bool
+	OverUI       bool
 
 	pressedEntity ecs.Entity
 	hasPressed    bool
@@ -41,6 +47,7 @@ func InteractionSystem(world *ecs.World) {
 			hasHit = true
 		}
 	})
+	pointer.OverUI = hasHit
 
 	var clearList, hoverList, pressList []ecs.Entity
 	world.ForEach(mask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {

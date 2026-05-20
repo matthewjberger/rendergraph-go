@@ -163,6 +163,10 @@ func anchoredOrigin(node *Node, viewportW, viewportH float32) (float32, float32)
 		return viewportW - node.Width - node.X, viewportH - node.Height - node.Y
 	case AnchorCenter:
 		return (viewportW-node.Width)*0.5 + node.X, (viewportH-node.Height)*0.5 + node.Y
+	case AnchorTopCenter:
+		return (viewportW-node.Width)*0.5 + node.X, node.Y
+	case AnchorBottomCenter:
+		return (viewportW-node.Width)*0.5 + node.X, viewportH - node.Height - node.Y
 	default:
 		return node.X, node.Y
 	}

@@ -10,10 +10,6 @@ import (
 	"indigo/ui"
 )
 
-// BreakoutHud holds the UI entities that need per-frame mutation
-// from game state. Stored as a resource on the engine world so the
-// per-frame helper can update score/lives text + flash the win/lose
-// banner without rebuilding the tree.
 type BreakoutHud struct {
 	ScorePanel    ecs.Entity
 	ScoreLabel    ecs.Entity
@@ -27,12 +23,10 @@ type BreakoutHud struct {
 	MarqueePhase float32
 }
 
-// buildBreakoutHud lays out the in-game HUD: a score panel anchored
-// to the top-left, a lives panel mirrored to the top-right, a launch
-// hint pinned to the bottom-center, and a centered banner that flips
-// on at win/lose with a color-cycling label plus a Restart button.
-// All entities exist from frame zero; update_hud below toggles their
-// visibility by writing into their Color / Text components.
+// buildBreakoutHud builds the persistent HUD tree. All entities
+// exist from frame zero; visibility is toggled per frame in
+// [updateBreakoutHud] by writing into their Color / Text alpha,
+// rather than spawning/despawning UI entities.
 func buildBreakoutHud(world *ecs.World) BreakoutHud {
 	b := ui.NewBuilder(world)
 
@@ -79,7 +73,9 @@ func buildBreakoutHud(world *ecs.World) BreakoutHud {
 		Color:   [4]float32{1, 1, 1, 0},
 		Scale:   4.5,
 	}).Entity()
-	restartButton := b.Node(ui.Node{Width: 200, Height: 32}).
+	// X = (panel inner width - button width) / 2 to center inside
+	// the LayoutColumn cursor (which left-aligns children).
+	restartButton := b.Node(ui.Node{X: 114, Width: 200, Height: 32}).
 		Color(ui.Color{RGBA: [4]float32{0, 0, 0, 0}}).
 		Interactive().
 		Text(ui.Text{
@@ -101,11 +97,6 @@ func buildBreakoutHud(world *ecs.World) BreakoutHud {
 	}
 }
 
-// updateBreakoutHud rewrites the HUD's per-frame state from the
-// current GameState: score + lives text on the corner panels, hint
-// fades out once play starts, banner becomes visible when the round
-// ends with VICTORY / GAME OVER and a Restart button, and the banner
-// label color cycles via a sine-wave marquee.
 func updateBreakoutHud(worlds app.Worlds, delta float32) {
 	if worlds.UI == nil {
 		return
@@ -171,10 +162,8 @@ func updateBreakoutHud(worlds app.Worlds, delta float32) {
 	}
 }
 
-// marqueeColor returns an RGB color cycling through the hue wheel
-// at the given phase. The three channels are sine waves with 120°
-// phase offsets so the result sweeps red -> yellow -> green ->
-// cyan -> blue -> magenta -> red over a 2*pi-phase period.
+// marqueeColor cycles RGB through the hue wheel via three sine waves
+// phase-offset by 120 degrees.
 func marqueeColor(phase, alpha float32) [4]float32 {
 	const twoPiOver3 = 2.0943951
 	r := 0.5 + 0.5*float32(math.Sin(float64(phase)))
@@ -183,10 +172,6 @@ func marqueeColor(phase, alpha float32) [4]float32 {
 	return [4]float32{r, g, bb, alpha}
 }
 
-// handleBreakoutUiClicks drains UI EntityClicked events from the UI
-// world and dispatches them. Today the only interactive widget is
-// the Restart button, which flips [GameState.RequestReset] so the
-// next frame's breakoutResetSystem rebuilds the wall.
 func handleBreakoutUiClicks(worlds app.Worlds) {
 	if worlds.UI == nil {
 		return
@@ -200,9 +185,6 @@ func handleBreakoutUiClicks(worlds app.Worlds) {
 	}
 }
 
-// syncBreakoutUiPointer mirrors editor's helper: copies the engine
-// mouse + left button edges into the UI world's pointer state so the
-// interaction system sees this frame's input.
 func syncBreakoutUiPointer(worlds app.Worlds) {
 	if worlds.UI == nil {
 		return

@@ -82,6 +82,7 @@ func main() {
 
 		app.TickFrame(worlds, demo, delta)
 		handleUiClicks(worlds)
+		refreshModeButtons(worlds)
 
 		switch err := render.RenderFrame(renderer, worlds.Engine); {
 		case err == nil:
@@ -96,9 +97,7 @@ func main() {
 		if picking := ecs.Resource[*render.Picking](worlds.Engine); (*picking).Result != nil {
 			result := (*picking).Result
 			(*picking).Result = nil
-			applySelection(worlds.Engine, result.EntityID)
-			glfwWindow.SetTitle(pickTitle(result))
-			refreshHudLabel(worlds, result.EntityID)
+			handlePickResult(worlds, result.EntityID)
 		}
 
 		app.PostFrame(worlds)
