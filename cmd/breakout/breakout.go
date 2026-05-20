@@ -42,7 +42,7 @@ const (
 // brick wall. Engine entities carry transforms + RenderMesh; game
 // entities carry the gameplay components and an EngineEntity link to
 // the engine-side render twin.
-func spawnBreakoutScene(worlds Worlds, meshes brickMeshes) {
+func spawnBreakoutScene(worlds app.Worlds, meshes brickMeshes) {
 	engineMask := ecs.MaskOf[transform.LocalTransform](worlds.Engine) |
 		ecs.MaskOf[transform.GlobalTransform](worlds.Engine) |
 		ecs.MaskOf[transform.LocalTransformDirty](worlds.Engine) |

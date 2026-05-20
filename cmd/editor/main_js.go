@@ -8,6 +8,7 @@ import (
 
 	"github.com/cogentcore/webgpu/wgpu"
 
+	"indigo/app"
 	"indigo/ecs"
 	"indigo/render"
 	"indigo/transform"
@@ -81,13 +82,13 @@ func main() {
 		delta := float32(now.Sub(last).Seconds())
 		last = now
 
-		tickFrame(worlds, demo, delta)
+		app.TickFrame(worlds, demo, delta)
 
 		if err := renderer.RenderFrame(worlds.Engine); err != nil {
 			js.Global().Get("console").Call("error", "render error: "+err.Error())
 		}
 
-		postFrame(worlds)
+		app.PostFrame(worlds)
 
 		js.Global().Call("requestAnimationFrame", frame)
 		return nil

@@ -15,6 +15,7 @@ import (
 	"github.com/cogentcore/webgpu/wgpuglfw"
 	"github.com/go-gl/glfw/v3.3/glfw"
 
+	"indigo/app"
 	"indigo/ecs"
 	"indigo/render"
 	"indigo/transform"
@@ -76,7 +77,7 @@ func main() {
 		delta := float32(now.Sub(last).Seconds())
 		last = now
 
-		tickFrame(worlds, demo, delta)
+		app.TickFrame(worlds, demo, delta)
 
 		switch err := renderer.RenderFrame(worlds.Engine); {
 		case err == nil:
@@ -86,7 +87,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		postFrame(worlds)
+		app.PostFrame(worlds)
 	}
 }
 

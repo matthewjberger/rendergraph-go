@@ -1,9 +1,7 @@
 // Shared bootstrap used by both the desktop (!js) and wasm (js)
-// entry points. The engine world holds rendering data (transforms,
-// RenderMesh, camera, input); the game world holds game state
-// (spinner) plus an EngineEntity reference that links each game
-// entity to its engine counterpart. Two [ecs.Schedule]s order
-// systems on each world.
+// entry points. Builds an engine world via [app.NewEngineWorld] plus
+// a game world that holds Spinner state, wires schedules + the
+// render graph, then spawns the demo scene.
 package main
 
 import (
@@ -25,15 +23,6 @@ import (
 // sync into via the [app.SyncEngine...] helpers.
 type EngineRef struct{ World *ecs.World }
 
-// Worlds bundles the engine + game worlds and their schedules so
-// platform main loops can pass them around as a unit.
-type Worlds struct {
-	Engine         *ecs.World
-	Game           *ecs.World
-	EngineSchedule *ecs.Schedule
-	GameSchedule   *ecs.Schedule
-}
-
 func setupLogging() {
 	switch os.Getenv("WGPU_LOG_LEVEL") {
 	case "OFF":
@@ -51,32 +40,15 @@ func setupLogging() {
 	}
 }
 
-// buildWorlds creates the engine + game worlds, registers components,
-// installs typed resources, builds two schedules (one per world), and
-// runs the app lifecycle hooks. The game world has an [EngineRef] so
-// game systems can reach the engine world through the sync API.
-func buildWorlds(renderer *render.Renderer) (Worlds, *app.App) {
-	engine := ecs.New()
-	ecs.Register[transform.LocalTransform](engine)
-	ecs.Register[transform.GlobalTransform](engine)
-	ecs.Register[transform.Parent](engine)
-	ecs.Register[transform.LocalTransformDirty](engine)
-	ecs.Register[render.RenderMesh](engine)
-	ecs.Register[render.Light](engine)
-
-	ecs.SetResource(engine, window.Window{
-		Viewport: window.ViewportSize{
-			Width:  renderer.Config.Width,
-			Height: renderer.Config.Height,
-		},
-	})
-	ecs.SetResource(engine, render.RendererResource{Renderer: renderer})
+// buildWorlds creates the engine + game worlds, installs editor-
+// specific resources on top of the engine defaults, builds two
+// schedules, compiles the render graph, and spawns the demo scene.
+// Returns [app.Worlds] plus the editor [app.App] (its lifecycle hooks
+// drive the render-graph wiring).
+func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
+	engine := app.NewEngineWorld(renderer)
 	ecs.SetResource(engine, render.DefaultCamera())
-	ecs.SetResource(engine, render.MeshAssetsResource{Assets: renderer.Meshes})
-	ecs.SetResource(engine, render.Input{})
 	ecs.SetResource(engine, render.DefaultPanOrbitController())
-	ecs.SetResource(engine, render.DefaultGraphicsSettings())
-	ecs.SetResource(engine, transform.NewPropagationState())
 
 	game := ecs.New()
 	ecs.Register[Spinner](game)
@@ -92,14 +64,14 @@ func buildWorlds(renderer *render.Renderer) (Worlds, *app.App) {
 	gameSchedule := ecs.NewSchedule()
 	gameSchedule.Push("spinner", advanceSpinners)
 
-	worlds := Worlds{
+	worlds := app.Worlds{
 		Engine:         engine,
 		Game:           game,
 		EngineSchedule: engineSchedule,
 		GameSchedule:   gameSchedule,
 	}
 
-	demo := spinnerDemo()
+	demo := editorApp()
 	if demo.Initialize != nil {
 		demo.Initialize(engine)
 	}
@@ -117,110 +89,26 @@ func buildWorlds(renderer *render.Renderer) (Worlds, *app.App) {
 	return worlds, demo
 }
 
-// tickFrame runs the per-frame pre-render work: stamp window timing,
-// run the game schedule (writes to engine via the sync API), run the
-// engine schedule (pan-orbit camera then transform propagation), run
-// the demo's optional hooks, and apply any deferred ECS commands.
-//
-// World.Step is deliberately NOT called here. Step bumps lastTick
-// past the just-stamped changes; if it ran before RenderFrame, the
-// mesh pass's IterChanged would see no changes. Call [postFrame]
-// AFTER the renderer has consumed this frame's stamps.
-func tickFrame(worlds Worlds, demo *app.App, delta float32) {
-	window.Advance(&ecs.Resource[window.Window](worlds.Engine).Timing, delta)
-	window.Advance(&ecs.Resource[window.Window](worlds.Game).Timing, delta)
-
-	worlds.GameSchedule.Run(worlds.Game)
-	worlds.EngineSchedule.Run(worlds.Engine)
-
-	if demo.RunSystems != nil {
-		demo.RunSystems(worlds.Engine)
-	}
-	if demo.PreRender != nil {
-		demo.PreRender(worlds.Engine)
-	}
-
-	worlds.Engine.ApplyCommands()
-	worlds.Game.ApplyCommands()
-}
-
-// postFrame finalizes the frame after the renderer has run: advance
-// each world's tick (rolls event queues, ages change-detection
-// watermarks) and clear the per-frame input deltas.
-func postFrame(worlds Worlds) {
-	worlds.Engine.Step()
-	worlds.Game.Step()
-	ecs.Resource[render.Input](worlds.Engine).BeginFrame()
-}
-
-// spinnerDemo wires the render pipeline: mesh pass writing
-// scene_color + depth, present pass blitting scene_color to the
-// swapchain.
-func spinnerDemo() *app.App {
+// editorApp wires the editor's render pipeline: sky -> mesh -> grid
+// -> fxaa -> present. Each [render.Add*Pass] helper builds the
+// underlying [render.Pass] and registers it with the graph.
+func editorApp() *app.App {
 	return &app.App{
 		ConfigureRenderGraph: func(world *ecs.World, renderer *render.Renderer) {
-			fxaaOutputID := renderer.Graph.AddColorTexture(render.ResourceDescriptor{
-				Name: "fxaa_output",
-				Kind: render.ResourceKindTransientColor,
-				Texture: render.TextureDescriptor{
-					Format: renderer.SurfaceFormat,
-					Width:  renderer.Config.Width,
-					Height: renderer.Config.Height,
-					Usage:  wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
-				},
-			})
-
-			sky, err := render.NewSkyPass(renderer.Device, renderer.SurfaceFormat, renderer.AspectRatio)
+			if _, err := render.AddSkyPass(renderer); err != nil {
+				log.Fatal(err)
+			}
+			if _, err := render.AddMeshPass(renderer); err != nil {
+				log.Fatal(err)
+			}
+			if _, err := render.AddGridPass(renderer); err != nil {
+				log.Fatal(err)
+			}
+			_, fxaaOutputID, err := render.AddFxaaPass(renderer)
 			if err != nil {
 				log.Fatal(err)
 			}
-			if err := renderer.Graph.AddPass(sky, []render.SlotBinding{
-				{Slot: "color", ResourceID: renderer.SceneColorID},
-			}); err != nil {
-				log.Fatal(err)
-			}
-
-			mesh, err := render.NewMeshPass(renderer.Device, renderer.SurfaceFormat, renderer.AspectRatio)
-			if err != nil {
-				log.Fatal(err)
-			}
-			if err := renderer.Graph.AddPass(mesh, []render.SlotBinding{
-				{Slot: "color", ResourceID: renderer.SceneColorID},
-				{Slot: "depth", ResourceID: renderer.DepthID},
-			}); err != nil {
-				log.Fatal(err)
-			}
-
-			grid, err := render.NewGridPass(renderer.Device, renderer.SurfaceFormat, renderer.AspectRatio)
-			if err != nil {
-				log.Fatal(err)
-			}
-			if err := renderer.Graph.AddPass(grid, []render.SlotBinding{
-				{Slot: "color", ResourceID: renderer.SceneColorID},
-				{Slot: "depth", ResourceID: renderer.DepthID},
-			}); err != nil {
-				log.Fatal(err)
-			}
-
-			fxaa, err := render.NewFxaaPass(renderer.Device, renderer.SurfaceFormat)
-			if err != nil {
-				log.Fatal(err)
-			}
-			if err := renderer.Graph.AddPass(fxaa, []render.SlotBinding{
-				{Slot: "input", ResourceID: renderer.SceneColorID},
-				{Slot: "output", ResourceID: fxaaOutputID},
-			}); err != nil {
-				log.Fatal(err)
-			}
-
-			present, err := render.NewPresentPass(renderer.Device, renderer.SurfaceFormat)
-			if err != nil {
-				log.Fatal(err)
-			}
-			if err := renderer.Graph.AddPass(present, []render.SlotBinding{
-				{Slot: "input", ResourceID: fxaaOutputID},
-				{Slot: "output", ResourceID: renderer.SwapchainID},
-			}); err != nil {
+			if _, err := render.AddPresentPass(renderer, fxaaOutputID); err != nil {
 				log.Fatal(err)
 			}
 		},
@@ -232,7 +120,7 @@ func spinnerDemo() *app.App {
 // a matching game entity per engine entity carrying its Spinner state
 // and EngineEntity bridge. Also spawns a sun-like directional light
 // pointing straight down.
-func initializeWorldEntities(worlds Worlds, meshes []render.MeshHandle) {
+func initializeWorldEntities(worlds app.Worlds, meshes []render.MeshHandle) {
 	const (
 		gridExtent  = 2
 		gridSpacing = 1.5

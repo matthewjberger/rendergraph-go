@@ -1,6 +1,6 @@
-// Shared bootstrap for the breakout app. Same dual-world pattern
-// the engine demo uses, but with breakout-specific components,
-// systems, and a fixed top-down camera instead of pan-orbit.
+// Setup wires the breakout app: engine + game worlds, the
+// breakout-specific camera and lighting, the render-graph
+// configuration (mesh -> fxaa -> present), and the brick wall.
 package main
 
 import (
@@ -19,14 +19,6 @@ import (
 // EngineRef on the game world points at the engine world. Game
 // systems read this to call [app.SyncEngine*] helpers.
 type EngineRef struct{ World *ecs.World }
-
-// Worlds bundles the engine + game worlds plus their schedules.
-type Worlds struct {
-	Engine         *ecs.World
-	Game           *ecs.World
-	EngineSchedule *ecs.Schedule
-	GameSchedule   *ecs.Schedule
-}
 
 // MeshSet is stashed as a resource so the reset system can spawn a
 // fresh wall of bricks with the right per-row colors.
@@ -51,31 +43,13 @@ func setupLogging() {
 	}
 }
 
-// buildWorlds wires the engine + game worlds for breakout: registers
-// transforms, RenderMesh, Light on engine; gameplay components on
-// game. Installs a fixed top-down camera, disables sky/grid, runs the
-// demo lifecycle, compiles the render graph, and spawns the scene.
-func buildWorlds(renderer *render.Renderer) (Worlds, *app.App) {
-	engine := ecs.New()
-	ecs.Register[transform.LocalTransform](engine)
-	ecs.Register[transform.GlobalTransform](engine)
-	ecs.Register[transform.Parent](engine)
-	ecs.Register[transform.LocalTransformDirty](engine)
-	ecs.Register[render.RenderMesh](engine)
-	ecs.Register[render.Light](engine)
-
-	ecs.SetResource(engine, window.Window{
-		Viewport: window.ViewportSize{
-			Width:  renderer.Config.Width,
-			Height: renderer.Config.Height,
-		},
-	})
-	ecs.SetResource(engine, render.RendererResource{Renderer: renderer})
+// buildWorlds creates engine + game worlds, layers breakout-specific
+// camera and game state on top of the engine defaults, builds two
+// schedules, configures the render graph, spawns the scene, and
+// compiles. Returns [app.Worlds] plus the breakout [app.App].
+func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
+	engine := app.NewEngineWorld(renderer)
 	ecs.SetResource(engine, breakoutCamera())
-	ecs.SetResource(engine, render.MeshAssetsResource{Assets: renderer.Meshes})
-	ecs.SetResource(engine, render.NewInput())
-	ecs.SetResource(engine, render.DefaultGraphicsSettings())
-	ecs.SetResource(engine, transform.NewPropagationState())
 
 	game := ecs.New()
 	ecs.Register[Paddle](game)
@@ -97,7 +71,7 @@ func buildWorlds(renderer *render.Renderer) (Worlds, *app.App) {
 	gameSchedule.Push("reset", breakoutResetSystem)
 	gameSchedule.Push("sync", breakoutSyncSystem)
 
-	worlds := Worlds{
+	worlds := app.Worlds{
 		Engine:         engine,
 		Game:           game,
 		EngineSchedule: engineSchedule,
@@ -155,54 +129,20 @@ func spawnBreakoutSun(engine *ecs.World) {
 	})
 }
 
-// breakoutApp wires the render pipeline: mesh pass writes scene_color
-// + depth, fxaa antialiases into fxaa_output, present blits to the
-// swapchain. No sky or grid; the mesh pass is the first writer of
-// scene_color so its clear-on-load picks up the dark background.
+// breakoutApp wires the render pipeline: mesh -> fxaa -> present.
+// No sky or grid; mesh is the first writer of scene_color and its
+// clear-on-load supplies the dark background.
 func breakoutApp() *app.App {
 	return &app.App{
 		ConfigureRenderGraph: func(world *ecs.World, renderer *render.Renderer) {
-			fxaaOutputID := renderer.Graph.AddColorTexture(render.ResourceDescriptor{
-				Name: "fxaa_output",
-				Kind: render.ResourceKindTransientColor,
-				Texture: render.TextureDescriptor{
-					Format: renderer.SurfaceFormat,
-					Width:  renderer.Config.Width,
-					Height: renderer.Config.Height,
-					Usage:  wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
-				},
-			})
-
-			mesh, err := render.NewMeshPass(renderer.Device, renderer.SurfaceFormat, renderer.AspectRatio)
+			if _, err := render.AddMeshPass(renderer); err != nil {
+				log.Fatal(err)
+			}
+			_, fxaaOutputID, err := render.AddFxaaPass(renderer)
 			if err != nil {
 				log.Fatal(err)
 			}
-			if err := renderer.Graph.AddPass(mesh, []render.SlotBinding{
-				{Slot: "color", ResourceID: renderer.SceneColorID},
-				{Slot: "depth", ResourceID: renderer.DepthID},
-			}); err != nil {
-				log.Fatal(err)
-			}
-
-			fxaa, err := render.NewFxaaPass(renderer.Device, renderer.SurfaceFormat)
-			if err != nil {
-				log.Fatal(err)
-			}
-			if err := renderer.Graph.AddPass(fxaa, []render.SlotBinding{
-				{Slot: "input", ResourceID: renderer.SceneColorID},
-				{Slot: "output", ResourceID: fxaaOutputID},
-			}); err != nil {
-				log.Fatal(err)
-			}
-
-			present, err := render.NewPresentPass(renderer.Device, renderer.SurfaceFormat)
-			if err != nil {
-				log.Fatal(err)
-			}
-			if err := renderer.Graph.AddPass(present, []render.SlotBinding{
-				{Slot: "input", ResourceID: fxaaOutputID},
-				{Slot: "output", ResourceID: renderer.SwapchainID},
-			}); err != nil {
+			if _, err := render.AddPresentPass(renderer, fxaaOutputID); err != nil {
 				log.Fatal(err)
 			}
 		},
@@ -243,10 +183,10 @@ func breakoutResetSystem(game *ecs.World) {
 	state.Started = false
 
 	meshes := ecs.Resource[MeshSet](game).Meshes
-	respawnBricks(Worlds{Engine: engine, Game: game}, meshes)
+	respawnBricks(app.Worlds{Engine: engine, Game: game}, meshes)
 }
 
-func respawnBricks(worlds Worlds, meshes brickMeshes) {
+func respawnBricks(worlds app.Worlds, meshes brickMeshes) {
 	engineMask := ecs.MaskOf[transform.LocalTransform](worlds.Engine) |
 		ecs.MaskOf[transform.GlobalTransform](worlds.Engine) |
 		ecs.MaskOf[transform.LocalTransformDirty](worlds.Engine) |
@@ -280,34 +220,4 @@ func respawnBricks(worlds Worlds, meshes brickMeshes) {
 			ecs.Set(worlds.Game, gameEntity, app.EngineEntity{Entity: engineEntity})
 		}
 	}
-}
-
-// tickFrame runs the pre-render work for one frame. World.Step is
-// deferred to [postFrame] so the mesh pass's IterChanged
-// (which runs during RenderFrame, after tickFrame) can still see
-// this frame's stamps.
-func tickFrame(worlds Worlds, demo *app.App, delta float32) {
-	window.Advance(&ecs.Resource[window.Window](worlds.Engine).Timing, delta)
-	window.Advance(&ecs.Resource[window.Window](worlds.Game).Timing, delta)
-
-	worlds.GameSchedule.Run(worlds.Game)
-	worlds.EngineSchedule.Run(worlds.Engine)
-
-	if demo.RunSystems != nil {
-		demo.RunSystems(worlds.Engine)
-	}
-	if demo.PreRender != nil {
-		demo.PreRender(worlds.Engine)
-	}
-
-	worlds.Engine.ApplyCommands()
-	worlds.Game.ApplyCommands()
-}
-
-// postFrame finalizes after the renderer has run: Step both worlds,
-// clear per-frame input deltas.
-func postFrame(worlds Worlds) {
-	worlds.Engine.Step()
-	worlds.Game.Step()
-	ecs.Resource[render.Input](worlds.Engine).BeginFrame()
 }
