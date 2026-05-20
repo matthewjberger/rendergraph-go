@@ -90,7 +90,7 @@ func main() {
 		}
 		doc.Set("title", title)
 
-		if err := renderer.RenderFrame(worlds.Engine); err != nil {
+		if err := render.RenderFrame(renderer, worlds.Engine); err != nil {
 			js.Global().Get("console").Call("error", "render error: "+err.Error())
 		}
 
@@ -121,7 +121,7 @@ func installCanvasInputListeners(canvas js.Value, engine *ecs.World) {
 			return nil
 		}
 		input := ecs.Resource[render.Input](engine)
-		input.MarkKeyDown(r)
+		render.InputMarkKeyDown(input, r)
 		return nil
 	}))
 
@@ -134,7 +134,7 @@ func installCanvasInputListeners(canvas js.Value, engine *ecs.World) {
 			return nil
 		}
 		input := ecs.Resource[render.Input](engine)
-		input.MarkKeyUp(r)
+		render.InputMarkKeyUp(input, r)
 		return nil
 	}))
 }

@@ -73,8 +73,9 @@ type GlobalTransform struct {
 	Matrix Mat4
 }
 
-// Translation extracts the translation column from a global transform.
-func (g *GlobalTransform) Translation() Vec3 {
+// GlobalTransformTranslation extracts the translation column from a
+// world-space transform's matrix.
+func GlobalTransformTranslation(g *GlobalTransform) Vec3 {
 	return Vec3{g.Matrix[12], g.Matrix[13], g.Matrix[14]}
 }
 

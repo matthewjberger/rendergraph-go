@@ -1,6 +1,10 @@
 package main
 
-import "indigo/render"
+import (
+	"github.com/cogentcore/webgpu/wgpu"
+
+	"indigo/render"
+)
 
 // coloredCubeVertices returns a 36-vertex unit cube with every face
 // painted in the given color. Wound CCW from outside, same six-face
@@ -63,8 +67,8 @@ type brickMeshes struct {
 }
 
 // registerBreakoutMeshes uploads the colored cubes for the brick
-// rows, paddle, and ball into the engine's mesh registry.
-func registerBreakoutMeshes(renderer *render.Renderer) (brickMeshes, error) {
+// rows, paddle, and ball into the given mesh registry.
+func registerBreakoutMeshes(device *wgpu.Device, assets *render.MeshAssets) (brickMeshes, error) {
 	rowColors := [][4]float32{
 		{0.92, 0.28, 0.28, 1.0},
 		{0.95, 0.62, 0.25, 1.0},
@@ -74,8 +78,8 @@ func registerBreakoutMeshes(renderer *render.Renderer) (brickMeshes, error) {
 
 	var out brickMeshes
 	for index, color := range rowColors {
-		handle, err := renderer.Meshes.Register(
-			renderer.Device,
+		handle, err := assets.Register(
+			device,
 			brickRowMeshName(index),
 			coloredCubeVertices(color),
 		)
@@ -85,8 +89,8 @@ func registerBreakoutMeshes(renderer *render.Renderer) (brickMeshes, error) {
 		out.Rows = append(out.Rows, handle)
 	}
 
-	paddle, err := renderer.Meshes.Register(
-		renderer.Device,
+	paddle, err := assets.Register(
+		device,
 		"paddle",
 		coloredCubeVertices([4]float32{0.88, 0.88, 0.92, 1.0}),
 	)
@@ -95,8 +99,8 @@ func registerBreakoutMeshes(renderer *render.Renderer) (brickMeshes, error) {
 	}
 	out.Paddle = paddle
 
-	ball, err := renderer.Meshes.Register(
-		renderer.Device,
+	ball, err := assets.Register(
+		device,
 		"ball",
 		coloredCubeVertices([4]float32{0.35, 0.9, 0.95, 1.0}),
 	)

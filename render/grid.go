@@ -172,7 +172,7 @@ func gridPrepare(s any, context *PassContext) error {
 	camera := ecs.Resource[Camera](context.World)
 	aspect := state.aspectFn()
 
-	viewProj := camera.ViewProjection(aspect)
+	viewProj := CameraViewProjection(camera, aspect)
 
 	uniform := gridUniform{
 		ViewProj: viewProj,

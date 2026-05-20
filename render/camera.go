@@ -34,18 +34,18 @@ func DefaultCamera() Camera {
 	}
 }
 
-// View returns the camera's view matrix.
-func (c *Camera) View() mgl32.Mat4 {
+// CameraView returns the camera's view matrix.
+func CameraView(c *Camera) mgl32.Mat4 {
 	return mgl32.LookAtV(c.Eye, c.Target, c.Up)
 }
 
-// Projection returns the camera's perspective projection composed with
-// the OpenGL → wgpu depth-range remap.
-func (c *Camera) Projection(aspect float32) mgl32.Mat4 {
+// CameraProjection returns the camera's perspective projection
+// composed with the OpenGL → wgpu depth-range remap.
+func CameraProjection(c *Camera, aspect float32) mgl32.Mat4 {
 	return PerspectiveZO(c.FovYRadians, aspect, c.Near, c.Far)
 }
 
-// ViewProjection returns Projection × View.
-func (c *Camera) ViewProjection(aspect float32) mgl32.Mat4 {
-	return c.Projection(aspect).Mul4(c.View())
+// CameraViewProjection returns CameraProjection × CameraView.
+func CameraViewProjection(c *Camera, aspect float32) mgl32.Mat4 {
+	return CameraProjection(c, aspect).Mul4(CameraView(c))
 }

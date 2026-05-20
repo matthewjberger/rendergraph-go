@@ -1,22 +1,30 @@
 package app
 
 import (
+	"fmt"
+
 	"indigo/ecs"
 	"indigo/render"
 	"indigo/transform"
 	"indigo/window"
 )
 
+// EngineRef is the game-world resource pointing at the engine world.
+// Game systems read this to look up the engine world they should
+// sync into via the [SyncEngine...] helpers.
+type EngineRef struct{ World *ecs.World }
+
 // NewEngineWorld builds the engine-side ECS world every app shares:
 // the standard transform + RenderMesh + Light component types and
 // the resources the standard engine systems read (window, renderer,
-// mesh assets, input, graphics settings, propagation state).
+// mesh assets + primitives, input, graphics settings, propagation
+// state).
 //
 // Apps may register additional engine-side components and resources
 // after this returns. The order of any later [ecs.Register] calls
 // determines the bit positions for those types in this world; this
 // helper does not stabilize bit positions across apps.
-func NewEngineWorld(renderer *render.Renderer) *ecs.World {
+func NewEngineWorld(renderer *render.Renderer) (*ecs.World, error) {
 	engine := ecs.New()
 	ecs.Register[transform.LocalTransform](engine)
 	ecs.Register[transform.GlobalTransform](engine)
@@ -24,6 +32,13 @@ func NewEngineWorld(renderer *render.Renderer) *ecs.World {
 	ecs.Register[transform.LocalTransformDirty](engine)
 	ecs.Register[render.RenderMesh](engine)
 	ecs.Register[render.Light](engine)
+
+	meshAssets := render.NewMeshAssets()
+	primitives, err := render.RegisterPrimitives(renderer.Device, meshAssets)
+	if err != nil {
+		return nil, fmt.Errorf("app: register primitives: %w", err)
+	}
+
 	ecs.SetResource(engine, window.Window{
 		Viewport: window.ViewportSize{
 			Width:  renderer.Config.Width,
@@ -31,11 +46,12 @@ func NewEngineWorld(renderer *render.Renderer) *ecs.World {
 		},
 	})
 	ecs.SetResource(engine, render.RendererResource{Renderer: renderer})
-	ecs.SetResource(engine, render.MeshAssetsResource{Assets: renderer.Meshes})
+	ecs.SetResource(engine, render.MeshAssetsResource{Assets: meshAssets})
+	ecs.SetResource(engine, primitives)
 	ecs.SetResource(engine, render.NewInput())
 	ecs.SetResource(engine, render.DefaultGraphicsSettings())
 	ecs.SetResource(engine, transform.NewPropagationState())
-	return engine
+	return engine, nil
 }
 
 // Worlds bundles an engine world, a game world, and their schedules.
@@ -83,5 +99,5 @@ func TickFrame(worlds Worlds, hooks *App, delta float32) {
 func PostFrame(worlds Worlds) {
 	worlds.Engine.Step()
 	worlds.Game.Step()
-	ecs.Resource[render.Input](worlds.Engine).BeginFrame()
+	render.InputBeginFrame(ecs.Resource[render.Input](worlds.Engine))
 }

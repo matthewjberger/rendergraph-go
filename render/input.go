@@ -11,7 +11,7 @@ import "indigo/transform"
 // platform reports a key-up.
 //
 // KeysJustDown is the set of keys that transitioned from up to down
-// during the current frame. Cleared by [Input.BeginFrame] so consumers
+// during the current frame. Cleared by [InputBeginFrame] so consumers
 // see edge-triggered presses, not held.
 type Input struct {
 	MousePosition transform.Vec2
@@ -31,10 +31,10 @@ func NewInput() Input {
 	return Input{KeysDown: make(map[rune]struct{}, 16)}
 }
 
-// MarkKeyDown records both the held state and the edge-triggered
-// press for a key. Auto-allocates KeysDown on first use so zero-valued
-// Input is usable.
-func (i *Input) MarkKeyDown(key rune) {
+// InputMarkKeyDown records both the held state and the edge-
+// triggered press for a key. Auto-allocates KeysDown on first use so
+// zero-valued Input is usable.
+func InputMarkKeyDown(i *Input, key rune) {
 	if i.KeysDown == nil {
 		i.KeysDown = make(map[rune]struct{}, 16)
 	}
@@ -42,22 +42,22 @@ func (i *Input) MarkKeyDown(key rune) {
 	i.KeysJustDown = append(i.KeysJustDown, key)
 }
 
-// MarkKeyUp clears the held state for a key.
-func (i *Input) MarkKeyUp(key rune) {
+// InputMarkKeyUp clears the held state for a key.
+func InputMarkKeyUp(i *Input, key rune) {
 	delete(i.KeysDown, key)
 }
 
-// IsKeyDown reports whether key is currently held.
-func (i *Input) IsKeyDown(key rune) bool {
+// InputIsKeyDown reports whether key is currently held.
+func InputIsKeyDown(i *Input, key rune) bool {
 	_, ok := i.KeysDown[key]
 	return ok
 }
 
-// BeginFrame zeroes the per-frame deltas and key edges (mouse
+// InputBeginFrame zeroes the per-frame deltas and key edges (mouse
 // movement, wheel scroll, just-pressed keys) so the input state at
 // the start of each frame is "no input this frame yet." Held buttons
 // and held keys stay held.
-func (i *Input) BeginFrame() {
+func InputBeginFrame(i *Input) {
 	i.MouseDelta = transform.Vec2{0, 0}
 	i.Wheel = 0
 	i.KeysJustDown = i.KeysJustDown[:0]

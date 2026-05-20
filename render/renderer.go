@@ -25,10 +25,12 @@ import (
 // the nightshade engine so future passes can be ported as-is.
 const DepthFormat = wgpu.TextureFormatDepth32Float
 
-// Renderer owns every long-lived WGPU object: surface, adapter, device,
-// queue, the render graph, and the ids of the graph's standard resources
-// (swapchain, scene_color, depth). It is stored as a resource on the ECS
-// world and is not safe for concurrent use.
+// Renderer owns the long-lived WGPU surface/device/queue plus the
+// render graph and the ids of the graph's standard resources
+// (swapchain, scene_color, depth). Mesh registries and primitive
+// handles live as separate engine-world resources (see
+// [MeshAssets] / [Primitives]). The renderer is stored as a resource
+// on the ECS world and is not safe for concurrent use.
 type Renderer struct {
 	Surface       *wgpu.Surface
 	Adapter       *wgpu.Adapter
@@ -41,20 +43,6 @@ type Renderer struct {
 	SwapchainID  ResourceID
 	SceneColorID ResourceID
 	DepthID      ResourceID
-
-	// Meshes is the engine's mesh registry. Always non-nil after
-	// NewRenderer returns; passes look it up via the
-	// [MeshAssetsResource] typed resource installed on the engine
-	// world.
-	Meshes *MeshAssets
-
-	// UnitTriangle / UnitQuad / UnitCube are the built-in primitive
-	// mesh handles registered at renderer init. Applications attach
-	// them to entities via [RenderMesh] without doing their own asset
-	// registration.
-	UnitTriangle MeshHandle
-	UnitQuad     MeshHandle
-	UnitCube     MeshHandle
 }
 
 // NewRenderer acquires an adapter and device from the instance, configures
@@ -102,24 +90,6 @@ func NewRenderer(instance *wgpu.Instance, surface *wgpu.Surface, width, height u
 	renderer.SwapchainID = renderer.Graph.ResourceByName("swapchain")
 	renderer.SceneColorID = renderer.Graph.ResourceByName("scene_color")
 	renderer.DepthID = renderer.Graph.ResourceByName("depth")
-
-	renderer.Meshes = NewMeshAssets()
-	for _, primitive := range []struct {
-		name     string
-		vertices []MeshVertex
-		out      *MeshHandle
-	}{
-		{"unit_triangle", UnitTriangleVertices, &renderer.UnitTriangle},
-		{"unit_quad", UnitQuadVertices, &renderer.UnitQuad},
-		{"unit_cube", UnitCubeVertices, &renderer.UnitCube},
-	} {
-		handle, err := renderer.Meshes.Register(device, primitive.name, primitive.vertices)
-		if err != nil {
-			renderer.Release()
-			return nil, err
-		}
-		*primitive.out = handle
-	}
 
 	return renderer, nil
 }
@@ -192,8 +162,11 @@ func (r *Renderer) Reconfigure() {
 }
 
 // RenderFrame acquires the next surface texture, wires it into the
-// "swapchain" resource, runs the graph against the world, and presents.
-func (r *Renderer) RenderFrame(world *ecs.World) error {
+// "swapchain" resource, runs the graph against the world, and
+// presents. Shaped like a system (free function over the renderer +
+// world) so the main loop's call site reads consistently with the
+// scheduler.
+func RenderFrame(r *Renderer, world *ecs.World) error {
 	surfaceTexture, err := r.Surface.GetCurrentTexture()
 	if err != nil {
 		return wrapSurfaceErr(err)
@@ -237,11 +210,10 @@ type RendererResource struct {
 	Renderer *Renderer
 }
 
-// Release frees every WGPU object owned by the renderer.
+// Release frees every WGPU object owned by the renderer. Mesh
+// registries owned by the engine world ([MeshAssets] resource) are
+// released independently.
 func (r *Renderer) Release() {
-	if r.Meshes != nil {
-		r.Meshes.Release()
-	}
 	if r.Graph != nil {
 		r.Graph.Release()
 	}

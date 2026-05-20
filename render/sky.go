@@ -151,8 +151,8 @@ func skyPrepare(s any, context *PassContext) error {
 	state := s.(*skyPassState)
 	camera := ecs.Resource[Camera](context.World)
 	aspect := state.aspectFn()
-	proj := camera.Projection(aspect)
-	view := camera.View()
+	proj := CameraProjection(camera, aspect)
+	view := CameraView(camera)
 	projInv := proj.Inv()
 
 	uniform := skyUniform{

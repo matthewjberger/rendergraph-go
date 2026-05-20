@@ -117,17 +117,17 @@ func spawnBreakoutScene(worlds app.Worlds, meshes brickMeshes) {
 // breakoutInputSystem reads the engine world's [render.Input] (filled
 // by the platform callbacks each frame) and writes paddle motion plus
 // gameplay edge events (launch, reset) into the game world. A and D
-// are held checks via [render.Input.IsKeyDown]; space and R are
+// are held checks via [render.InputIsKeyDown]; space and R are
 // edge-triggered via KeysJustDown.
 func breakoutInputSystem(game *ecs.World) {
-	engineRef := ecs.Resource[EngineRef](game)
+	engineRef := ecs.Resource[app.EngineRef](game)
 	engine := engineRef.World
 	input := ecs.Resource[render.Input](engine)
 	state := ecs.Resource[GameState](game)
 	delta := ecs.Resource[window.Window](game).Timing.DeltaSeconds
 
-	leftHeld := input.IsKeyDown('A')
-	rightHeld := input.IsKeyDown('D')
+	leftHeld := render.InputIsKeyDown(input, 'A')
+	rightHeld := render.InputIsKeyDown(input, 'D')
 	launchPressed := false
 	for _, key := range input.KeysJustDown {
 		switch key {
@@ -184,7 +184,7 @@ func breakoutInputSystem(game *ecs.World) {
 // Brick hits despawn the linked engine entity through the named sync
 // API. The ball stays glued to the paddle while unlaunched.
 func breakoutBallSystem(game *ecs.World) {
-	engineRef := ecs.Resource[EngineRef](game)
+	engineRef := ecs.Resource[app.EngineRef](game)
 	engine := engineRef.World
 	state := ecs.Resource[GameState](game)
 	delta := ecs.Resource[window.Window](game).Timing.DeltaSeconds
@@ -300,7 +300,7 @@ func breakoutWinSystem(game *ecs.World) {
 // this is technically redundant for them, but it keeps the pattern
 // uniform with the spinner demo.
 func breakoutSyncSystem(game *ecs.World) {
-	engineRef := ecs.Resource[EngineRef](game)
+	engineRef := ecs.Resource[app.EngineRef](game)
 	engine := engineRef.World
 
 	paddleMask := ecs.MaskOf[Paddle](game) | ecs.MaskOf[app.EngineEntity](game)

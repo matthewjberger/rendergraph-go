@@ -37,7 +37,7 @@ func TestUpdateGlobalTransformsRoot(t *testing.T) {
 	if !ok {
 		t.Fatal("GlobalTransform missing after update")
 	}
-	got := global.Translation()
+	got := transform.GlobalTransformTranslation(global)
 	want := transform.Vec3{1, 2, 3}
 	if got != want {
 		t.Fatalf("translation = %v, want %v", got, want)
@@ -69,7 +69,7 @@ func TestUpdateGlobalTransformsParentChain(t *testing.T) {
 	if !ok {
 		t.Fatal("child GlobalTransform missing")
 	}
-	got := global.Translation()
+	got := transform.GlobalTransformTranslation(global)
 	want := transform.Vec3{10, 5, 0}
 	if got != want {
 		t.Fatalf("child world translation = %v, want %v", got, want)
@@ -85,7 +85,7 @@ func TestUpdateGlobalTransformsRootFlag(t *testing.T) {
 	transform.UpdateGlobalTransforms(world)
 
 	global, _ := ecs.Get[transform.GlobalTransform](world, b)
-	got := global.Translation()
+	got := transform.GlobalTransformTranslation(global)
 	want := transform.Vec3{0, 5, 0}
 	if got != want {
 		t.Fatalf("IsRoot=true should ignore parent, got %v want %v", got, want)
@@ -102,7 +102,7 @@ func TestUpdateGlobalTransformsCycleTerminates(t *testing.T) {
 	transform.UpdateGlobalTransforms(world)
 
 	global, _ := ecs.Get[transform.GlobalTransform](world, a)
-	got := global.Translation()
+	got := transform.GlobalTransformTranslation(global)
 	want := transform.Vec3{7, 7, 7}
 	if got != want {
 		t.Fatalf("cycle truncation should leave a's chain at a.local, got %v want %v", got, want)
@@ -123,7 +123,7 @@ func TestUpdateGlobalTransformsDepthLimitIsBounded(t *testing.T) {
 	transform.UpdateGlobalTransforms(world)
 
 	global, _ := ecs.Get[transform.GlobalTransform](world, tail)
-	got := global.Translation()
+	got := transform.GlobalTransformTranslation(global)
 	if got[0] > float32(transform.MaxHierarchyDepth) {
 		t.Fatalf("walker accumulated more than MaxHierarchyDepth locals: %v", got)
 	}

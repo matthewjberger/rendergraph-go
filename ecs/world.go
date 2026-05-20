@@ -43,6 +43,11 @@ func newWorldWithAllocator(shared *allocator) *World {
 		eventByType: make(map[reflect.Type]int),
 		tagSets:     make(map[reflect.Type]map[Entity]struct{}),
 		resources:   make(map[reflect.Type]any),
+		// currentTick starts at 1, not 0, so changes stamped before
+		// the first Step (initial spawns, setup-time mutations) are
+		// strictly greater than the zero-valued lastTick watermark
+		// and visible to IterChanged on frame 0.
+		currentTick: 1,
 	}
 }
 

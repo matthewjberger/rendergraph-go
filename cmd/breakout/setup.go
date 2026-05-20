@@ -16,10 +16,6 @@ import (
 	"indigo/window"
 )
 
-// EngineRef on the game world points at the engine world. Game
-// systems read this to call [app.SyncEngine*] helpers.
-type EngineRef struct{ World *ecs.World }
-
 // MeshSet is stashed as a resource so the reset system can spawn a
 // fresh wall of bricks with the right per-row colors.
 type MeshSet struct {
@@ -48,7 +44,10 @@ func setupLogging() {
 // schedules, configures the render graph, spawns the scene, and
 // compiles. Returns [app.Worlds] plus the breakout [app.App].
 func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
-	engine := app.NewEngineWorld(renderer)
+	engine, err := app.NewEngineWorld(renderer)
+	if err != nil {
+		log.Fatal(err)
+	}
 	ecs.SetResource(engine, breakoutCamera())
 
 	game := ecs.New()
@@ -57,7 +56,7 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 	ecs.Register[Brick](game)
 	ecs.Register[app.EngineEntity](game)
 	ecs.SetResource(game, window.Window{})
-	ecs.SetResource(game, EngineRef{World: engine})
+	ecs.SetResource(game, app.EngineRef{World: engine})
 	ecs.SetResource(game, GameState{Lives: startingLives})
 
 	engineSchedule := ecs.NewSchedule()
@@ -83,7 +82,8 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 		demo.ConfigureRenderGraph(engine, renderer)
 	}
 
-	meshes, err := registerBreakoutMeshes(renderer)
+	assets := ecs.Resource[render.MeshAssetsResource](engine).Assets
+	meshes, err := registerBreakoutMeshes(renderer.Device, assets)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func breakoutResetSystem(game *ecs.World) {
 		return
 	}
 	state.RequestReset = false
-	engine := ecs.Resource[EngineRef](game).World
+	engine := ecs.Resource[app.EngineRef](game).World
 
 	brickMask := ecs.MaskOf[Brick](game) | ecs.MaskOf[app.EngineEntity](game)
 	var dead []ecs.Entity

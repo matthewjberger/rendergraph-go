@@ -18,11 +18,6 @@ import (
 	"indigo/window"
 )
 
-// EngineRef is the game-world resource that points at the engine
-// world. Game systems read this to find the engine world they should
-// sync into via the [app.SyncEngine...] helpers.
-type EngineRef struct{ World *ecs.World }
-
 func setupLogging() {
 	switch os.Getenv("WGPU_LOG_LEVEL") {
 	case "OFF":
@@ -46,7 +41,10 @@ func setupLogging() {
 // Returns [app.Worlds] plus the editor [app.App] (its lifecycle hooks
 // drive the render-graph wiring).
 func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
-	engine := app.NewEngineWorld(renderer)
+	engine, err := app.NewEngineWorld(renderer)
+	if err != nil {
+		log.Fatal(err)
+	}
 	ecs.SetResource(engine, render.DefaultCamera())
 	ecs.SetResource(engine, render.DefaultPanOrbitController())
 
@@ -54,7 +52,7 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 	ecs.Register[Spinner](game)
 	ecs.Register[app.EngineEntity](game)
 	ecs.SetResource(game, window.Window{})
-	ecs.SetResource(game, EngineRef{World: engine})
+	ecs.SetResource(game, app.EngineRef{World: engine})
 
 	engineSchedule := ecs.NewSchedule()
 	engineSchedule.Push("graphics_toggles", render.UpdateGraphicsToggles)
@@ -78,10 +76,11 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 	if demo.ConfigureRenderGraph != nil {
 		demo.ConfigureRenderGraph(engine, renderer)
 	}
+	primitives := ecs.Resource[render.Primitives](engine)
 	initializeWorldEntities(worlds, []render.MeshHandle{
-		renderer.UnitTriangle,
-		renderer.UnitQuad,
-		renderer.UnitCube,
+		primitives.UnitTriangle,
+		primitives.UnitQuad,
+		primitives.UnitCube,
 	})
 	if err := renderer.Graph.Compile(renderer.Device); err != nil {
 		log.Fatal(err)
@@ -188,7 +187,7 @@ func initializeWorldEntities(worlds app.Worlds, meshes []render.MeshHandle) {
 // goes through the named sync API.
 func advanceSpinners(game *ecs.World) {
 	delta := ecs.Resource[window.Window](game).Timing.DeltaSeconds
-	engineRef := ecs.Resource[EngineRef](game)
+	engineRef := ecs.Resource[app.EngineRef](game)
 
 	spinnerMask := ecs.MaskOf[Spinner](game) | ecs.MaskOf[app.EngineEntity](game)
 

@@ -7,9 +7,39 @@ import (
 )
 
 // MeshHandle is an opaque index into a [MeshAssets] registry. Zero is
-// not a special value; the renderer hands the first registered mesh
+// not a special value; the registry hands the first registered mesh
 // out as handle 0.
 type MeshHandle uint32
+
+// Primitives bundles the built-in unit-mesh handles produced by
+// [RegisterPrimitives]. Stored as a typed resource on the engine
+// world so apps that want a quick cube or quad can pull the handle
+// off the world without keeping a reference to the renderer.
+type Primitives struct {
+	UnitTriangle MeshHandle
+	UnitQuad     MeshHandle
+	UnitCube     MeshHandle
+}
+
+// RegisterPrimitives uploads the unit triangle, quad, and cube into
+// assets and returns their handles. Apps usually call this through
+// [indigo/app.NewEngineWorld] which installs the result as a
+// [Primitives] resource.
+func RegisterPrimitives(device *wgpu.Device, assets *MeshAssets) (Primitives, error) {
+	tri, err := assets.Register(device, "unit_triangle", UnitTriangleVertices)
+	if err != nil {
+		return Primitives{}, err
+	}
+	quad, err := assets.Register(device, "unit_quad", UnitQuadVertices)
+	if err != nil {
+		return Primitives{}, err
+	}
+	cube, err := assets.Register(device, "unit_cube", UnitCubeVertices)
+	if err != nil {
+		return Primitives{}, err
+	}
+	return Primitives{UnitTriangle: tri, UnitQuad: quad, UnitCube: cube}, nil
+}
 
 // MeshVertex is the input layout the engine's stock mesh shader
 // expects: position and color, each padded to vec4 stride. Custom

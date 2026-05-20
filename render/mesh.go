@@ -33,15 +33,9 @@ type handleInstances struct {
 	slotEntity   []ecs.Entity
 }
 
-func newHandleInstances() *handleInstances {
-	return &handleInstances{
-		entityToSlot: make(map[ecs.Entity]uint32, 16),
-	}
-}
-
-func (h *handleInstances) count() uint32 { return uint32(len(h.slotEntity)) }
-
-func (h *handleInstances) release() {
+// releaseHandleInstances drops the bucket's GPU buffer and bind
+// group. Companion to [ensureHandleCapacity], free-function style.
+func releaseHandleInstances(h *handleInstances) {
 	if h.bindGroup != nil {
 		h.bindGroup.Release()
 		h.bindGroup = nil
@@ -294,7 +288,10 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 //     [ecs.EntityDespawned] events; events stay readable for two frames,
 //     so the pass need only run at least once per pair of frames to
 //     avoid stale slots).
-//  3. Allocate slots for newly-spawned entities (full upload at slot).
+//  3. Allocate slots for entities whose RenderMesh was stamped this
+//     tick (new entities, or entities switching mesh handles). Driven
+//     by [ecs.IterChanged1] over RenderMesh so there is no per-frame
+//     scan over every visible entity.
 //  4. Sparse-upload only the entities whose GlobalTransform was
 //     stamped this tick.
 //  5. Rebuild the sorted handle list so the draw order is stable.
@@ -302,7 +299,7 @@ func meshPrepare(s any, context *PassContext) error {
 	state := s.(*meshPassState)
 
 	camera := ecs.Resource[Camera](context.World)
-	viewProjection := camera.ViewProjection(state.aspectFn())
+	viewProjection := CameraViewProjection(camera, state.aspectFn())
 	writeBuffer(context.Device, context.Queue, context.Encoder, state.viewProjBuffer, 0, bytesOf(&viewProjection))
 
 	lights := extractLights(context.World)
@@ -312,35 +309,39 @@ func meshPrepare(s any, context *PassContext) error {
 		releaseEntitySlot(state, context, event.Entity)
 	}
 
-	renderMeshMask := ecs.MaskOf[RenderMesh](context.World)
 	globalMask := ecs.MaskOf[transform.GlobalTransform](context.World)
-	visibleMask := renderMeshMask | globalMask
+	renderMeshMask := ecs.MaskOf[RenderMesh](context.World)
 
-	context.World.ForEach(visibleMask, 0, func(entity ecs.Entity, table *ecs.Archetype, index int) {
-		meshes, _ := ecs.Column[RenderMesh](context.World, table)
-		globals, _ := ecs.Column[transform.GlobalTransform](context.World, table)
-		handle := meshes[index].Mesh
-
-		bucket, ok := state.perHandle[handle]
-		if !ok {
-			bucket = newHandleInstances()
-			state.perHandle[handle] = bucket
-		}
-
-		if _, already := bucket.entityToSlot[entity]; already {
-			return
-		}
-
-		slot := uint32(len(bucket.slotEntity))
-		bucket.entityToSlot[entity] = slot
-		bucket.slotEntity = append(bucket.slotEntity, entity)
-		state.entityHandle[entity] = handle
-		if err := ensureHandleCapacity(bucket, context.Device, state.modelBgLayout); err != nil {
-			return
-		}
-		matrix := globals[index].Matrix
-		writeBuffer(context.Device, context.Queue, context.Encoder, bucket.buffer, uint64(slot)*matrixSize, bytesOf(&matrix))
-	})
+	ecs.IterChanged1[RenderMesh](
+		context.World,
+		globalMask,
+		0,
+		func(entity ecs.Entity, mesh *RenderMesh) {
+			if _, already := state.entityHandle[entity]; already {
+				return
+			}
+			global, ok := ecs.Get[transform.GlobalTransform](context.World, entity)
+			if !ok {
+				return
+			}
+			handle := mesh.Mesh
+			bucket, ok := state.perHandle[handle]
+			if !ok {
+				bucket = &handleInstances{
+					entityToSlot: make(map[ecs.Entity]uint32, 16),
+				}
+				state.perHandle[handle] = bucket
+			}
+			slot := uint32(len(bucket.slotEntity))
+			bucket.entityToSlot[entity] = slot
+			bucket.slotEntity = append(bucket.slotEntity, entity)
+			state.entityHandle[entity] = handle
+			if err := ensureHandleCapacity(bucket, context.Device, state.modelBgLayout); err != nil {
+				return
+			}
+			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.buffer, uint64(slot)*matrixSize, bytesOf(&global.Matrix))
+		},
+	)
 
 	ecs.IterChanged1[transform.GlobalTransform](
 		context.World,
@@ -365,7 +366,7 @@ func meshPrepare(s any, context *PassContext) error {
 
 	state.sortedHandles = state.sortedHandles[:0]
 	for handle, bucket := range state.perHandle {
-		if bucket.count() == 0 {
+		if len(bucket.slotEntity) == 0 {
 			continue
 		}
 		state.sortedHandles = append(state.sortedHandles, handle)
@@ -412,7 +413,7 @@ func meshExecute(s any, context *PassContext) error {
 		}
 		pass.SetBindGroup(1, bucket.bindGroup, nil)
 		pass.SetVertexBuffer(0, entry.Vertices, 0, wgpu.WholeSize)
-		pass.Draw(entry.VertexCount, bucket.count(), 0, 0)
+		pass.Draw(entry.VertexCount, uint32(len(bucket.slotEntity)), 0, 0)
 	}
 
 	pass.End()
@@ -423,7 +424,7 @@ func meshExecute(s any, context *PassContext) error {
 func meshRelease(s any) {
 	state := s.(*meshPassState)
 	for _, h := range state.perHandle {
-		h.release()
+		releaseHandleInstances(h)
 	}
 	if state.lightsBindGroup != nil {
 		state.lightsBindGroup.Release()
@@ -528,7 +529,7 @@ const minHandleCapacity uint32 = 64
 // actually changed, and slots that didn't change need their content
 // reuploaded.
 func ensureHandleCapacity(h *handleInstances, device *wgpu.Device, layout *wgpu.BindGroupLayout) error {
-	required := h.count()
+	required := uint32(len(h.slotEntity))
 	if h.capacity >= required && h.buffer != nil {
 		return nil
 	}

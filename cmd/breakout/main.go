@@ -79,7 +79,7 @@ func main() {
 		app.TickFrame(worlds, demo, delta)
 		glfwWindow.SetTitle(titleForState(ecs.Resource[GameState](worlds.Game)))
 
-		switch err := renderer.RenderFrame(worlds.Engine); {
+		switch err := render.RenderFrame(renderer, worlds.Engine); {
 		case err == nil:
 		case errors.Is(err, render.ErrSurfaceLost):
 			renderer.Reconfigure()
@@ -132,9 +132,9 @@ func installInputCallbacks(glfwWindow *glfw.Window, engine *ecs.World) {
 		input := ecs.Resource[render.Input](engine)
 		switch action {
 		case glfw.Press:
-			input.MarkKeyDown(r)
+			render.InputMarkKeyDown(input, r)
 		case glfw.Release:
-			input.MarkKeyUp(r)
+			render.InputMarkKeyUp(input, r)
 		}
 	})
 }
