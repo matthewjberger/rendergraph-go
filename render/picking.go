@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"unsafe"
 
 	"github.com/cogentcore/webgpu/wgpu"
 
@@ -181,64 +180,8 @@ func pickingRelease(s any) {
 	}
 }
 
-// ProcessPickingReadback advances any in-flight pick request by one
-// step. Call after [RenderFrame] each frame from the main loop.
-// Non-blocking: it issues a MapAsync once and then on subsequent
-// frames just checks whether the GPU has flushed the result. On
-// native, [Device.Poll] is invoked with wait=false so the binding's
-// internal queue gets a chance to fire the callback; on wasm the
-// browser's promise machinery does the same work.
-func ProcessPickingReadback(renderer *Renderer, world *ecs.World) {
-	if !ecs.HasResource[*Picking](world) {
-		return
-	}
-	picking := *ecs.Resource[*Picking](world)
-	if picking == nil || !picking.hasInFlight || picking.staging == nil {
-		return
-	}
-
-	if !picking.mapping {
-		err := picking.staging.MapAsync(wgpu.MapModeRead, 0, stagingRowStride, func(status wgpu.BufferMapAsyncStatus) {
-			picking.mu.Lock()
-			defer picking.mu.Unlock()
-			picking.mapped = true
-			if status != wgpu.BufferMapAsyncStatusSuccess {
-				picking.mapErr = fmt.Errorf("picking readback: map status %d", status)
-			}
-		})
-		if err != nil {
-			resetPicking(picking)
-			return
-		}
-		picking.mapping = true
-	}
-
-	renderer.Device.Poll(false, nil)
-
-	picking.mu.Lock()
-	mapped := picking.mapped
-	mapErr := picking.mapErr
-	picking.mu.Unlock()
-
-	if !mapped {
-		return
-	}
-	if mapErr != nil {
-		resetPicking(picking)
-		return
-	}
-
-	bytes := picking.staging.GetMappedRange(0, uint(stagingRowStride))
-	var entityID uint32
-	if len(bytes) >= 4 {
-		entityID = *(*uint32)(unsafe.Pointer(&bytes[0]))
-	}
-	picking.staging.Unmap()
-
-	picking.Result = &PickResult{EntityID: entityID, Request: picking.requested}
-	resetPicking(picking)
-}
-
+// resetPicking clears the in-flight bookkeeping after a pick has
+// resolved (or failed). Shared by the native and js readback paths.
 func resetPicking(p *Picking) {
 	p.hasInFlight = false
 	p.mapping = false
