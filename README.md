@@ -6,6 +6,8 @@ dual-world simulation and renderer separation, free-function systems
 wired through a named schedule. Runs natively (GLFW) and on the web
 (WebAssembly + canvas).
 
+![indigo editor](docs/editor.png)
+
 Architecture notes live in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Quickstart
