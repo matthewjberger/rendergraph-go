@@ -24,8 +24,8 @@ func DefaultGraphicsSettings() GraphicsSettings {
 // UpdateGraphicsToggles is the engine system that flips graphics
 // settings based on this frame's keyboard input. Press G to toggle the
 // grid, S to toggle the sky, F to toggle FXAA. Reads the keys-just-
-// down slice from [Input] and clears nothing -- BeginFrame on Input
-// resets the just-pressed slice.
+// down slice from [Input] and clears nothing; [Input.BeginFrame]
+// resets the just-pressed slice each frame.
 func UpdateGraphicsToggles(world *ecs.World) {
 	input := ecs.Resource[Input](world)
 	settings := ecs.Resource[GraphicsSettings](world)

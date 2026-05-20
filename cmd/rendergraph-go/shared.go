@@ -62,6 +62,7 @@ func buildWorlds(renderer *render.Renderer) (Worlds, *app.App) {
 	ecs.Register[transform.Parent](engine)
 	ecs.Register[transform.LocalTransformDirty](engine)
 	ecs.Register[render.RenderMesh](engine)
+	ecs.Register[render.Light](engine)
 
 	ecs.SetResource(engine, window.Window{
 		Viewport: window.ViewportSize{
@@ -220,12 +221,29 @@ func spinnerDemo() *app.App {
 // initializeWorldEntities spawns a 5x5 grid of engine entities
 // cycling through the supplied mesh handles for visual variety, plus
 // a matching game entity per engine entity carrying its Spinner state
-// and EngineEntity bridge.
+// and EngineEntity bridge. Also spawns a sun-like directional light
+// pointing straight down.
 func initializeWorldEntities(worlds Worlds, meshes []render.MeshHandle) {
 	const (
 		gridExtent  = 2
 		gridSpacing = 1.5
 	)
+
+	lightMask := ecs.MaskOf[transform.LocalTransform](worlds.Engine) |
+		ecs.MaskOf[transform.GlobalTransform](worlds.Engine) |
+		ecs.MaskOf[transform.LocalTransformDirty](worlds.Engine) |
+		ecs.MaskOf[render.Light](worlds.Engine)
+
+	sun := worlds.Engine.Spawn(lightMask)
+	sunTransform := transform.IdentityLocalTransform()
+	sunTransform.Rotation = transform.QuatFromAxisAngle(-float32(math.Pi/2), transform.Vec3{1, 0, 0})
+	ecs.Set(worlds.Engine, sun, sunTransform)
+	ecs.Set(worlds.Engine, sun, transform.IdentityGlobalTransform())
+	ecs.Set(worlds.Engine, sun, render.Light{
+		Type:      render.LightTypeDirectional,
+		Color:     transform.Vec3{1.0, 0.95, 0.85},
+		Intensity: 1.4,
+	})
 
 	engineMask := ecs.MaskOf[transform.LocalTransform](worlds.Engine) |
 		ecs.MaskOf[transform.GlobalTransform](worlds.Engine) |

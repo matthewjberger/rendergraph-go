@@ -35,7 +35,7 @@ type fxaaPassState struct {
 // "input" with a fullscreen blit, run edge-detect + subpixel-blend,
 // write to "output". Mirrors nightshade's FxaaPass. The cached bind
 // group is rebuilt whenever the input texture view changes via the
-// render graph's [Pass.InvalidateBindGroups] hook -- which fires on
+// render graph's [Pass.InvalidateBindGroups] hook, which fires on
 // resize and any other resource-version bump.
 func NewFxaaPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat) (*Pass, error) {
 	state := &fxaaPassState{}

@@ -85,7 +85,7 @@ func IdentityGlobalTransform() GlobalTransform {
 
 // Parent links a child entity to its parent. nightshade uses
 // `Parent(Option<Entity>)`; Go has no Option, so we keep a separate
-// IsRoot flag -- an entity with IsRoot=true (or no Parent component at
+// IsRoot flag. An entity with IsRoot=true (or no Parent component at
 // all) is a root.
 type Parent struct {
 	Entity ecs.Entity

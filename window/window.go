@@ -6,7 +6,7 @@
 // Ported from nightshade's `ecs::window::resources::Window` and
 // `WindowTiming`, stripped of the OO surface area: only the data
 // fields and a single free [Advance] function. No methods, no
-// hidden state, no platform handles -- the platform layer owns the
+// hidden state, no platform handles. The platform layer owns the
 // actual OS window and feeds this resource each frame.
 package window
 

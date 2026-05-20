@@ -63,15 +63,42 @@ type meshPassState struct {
 	pipeline       *wgpu.RenderPipeline
 	modelBgLayout  *wgpu.BindGroupLayout
 	viewProjLayout *wgpu.BindGroupLayout
+	lightsBgLayout *wgpu.BindGroupLayout
 
 	viewProjBuffer    *wgpu.Buffer
 	viewProjBindGroup *wgpu.BindGroup
+
+	lightsBuffer    *wgpu.Buffer
+	lightsBindGroup *wgpu.BindGroup
 
 	perHandle     map[MeshHandle]*handleInstances
 	entityHandle  map[ecs.Entity]MeshHandle
 	sortedHandles []MeshHandle
 
 	aspectFn func() float32
+}
+
+// lightDataUniform mirrors the WGSL LightData struct (48 bytes,
+// vec3 alignment leaves f32 scalars to pack into the trailing
+// 4 bytes of each vec3 slot).
+type lightDataUniform struct {
+	Position  [3]float32
+	LightType uint32
+	Direction [3]float32
+	Range     float32
+	Color     [3]float32
+	Intensity float32
+}
+
+// lightsUniform mirrors the WGSL Lights struct: u32 count plus 12
+// bytes of padding to land the array at a 16-byte boundary, followed
+// by MaxLights LightData entries.
+type lightsUniform struct {
+	Count uint32
+	Pad0  uint32
+	Pad1  uint32
+	Pad2  uint32
+	Data  [MaxLights]lightDataUniform
 }
 
 // NewMeshPass builds the engine's instanced mesh pass.
@@ -114,6 +141,19 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 	}
 	state.modelBgLayout = modelBgLayout
 
+	lightsBgLayout, err := device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+		Label: "mesh lights bind group layout",
+		Entries: []wgpu.BindGroupLayoutEntry{{
+			Binding:    0,
+			Visibility: wgpu.ShaderStageFragment,
+			Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeUniform},
+		}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mesh pass: lights bind group layout: %w", err)
+	}
+	state.lightsBgLayout = lightsBgLayout
+
 	viewProjBuffer, err := device.CreateBuffer(&wgpu.BufferDescriptor{
 		Label: "mesh view_proj buffer",
 		Size:  uint64(unsafe.Sizeof(mgl32.Mat4{})),
@@ -139,6 +179,31 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 	}
 	state.viewProjBindGroup = viewProjBindGroup
 
+	lightsBuffer, err := device.CreateBuffer(&wgpu.BufferDescriptor{
+		Label: "mesh lights buffer",
+		Size:  uint64(unsafe.Sizeof(lightsUniform{})),
+		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mesh pass: lights buffer: %w", err)
+	}
+	state.lightsBuffer = lightsBuffer
+
+	lightsBindGroup, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Label:  "mesh lights bind group",
+		Layout: lightsBgLayout,
+		Entries: []wgpu.BindGroupEntry{{
+			Binding: 0,
+			Buffer:  lightsBuffer,
+			Offset:  0,
+			Size:    uint64(unsafe.Sizeof(lightsUniform{})),
+		}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mesh pass: lights bind group: %w", err)
+	}
+	state.lightsBindGroup = lightsBindGroup
+
 	shader, err := device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
 		Label:          "mesh shader",
 		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{Code: meshShader},
@@ -150,7 +215,7 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 
 	pipelineLayout, err := device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
 		Label:            "mesh pipeline layout",
-		BindGroupLayouts: []*wgpu.BindGroupLayout{viewProjLayout, modelBgLayout},
+		BindGroupLayouts: []*wgpu.BindGroupLayout{viewProjLayout, modelBgLayout, lightsBgLayout},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("mesh pass: pipeline layout: %w", err)
@@ -239,6 +304,9 @@ func meshPrepare(s any, context *PassContext) error {
 	camera := ecs.Resource[Camera](context.World)
 	viewProjection := camera.ViewProjection(state.aspectFn())
 	context.Queue.WriteBuffer(state.viewProjBuffer, 0, bytesOf(&viewProjection))
+
+	lights := extractLights(context.World)
+	context.Queue.WriteBuffer(state.lightsBuffer, 0, bytesOf(&lights))
 
 	for _, event := range ecs.ReadEvents[ecs.EntityDespawned](context.World) {
 		releaseEntitySlot(state, context, event.Entity)
@@ -334,6 +402,7 @@ func meshExecute(s any, context *PassContext) error {
 	})
 	pass.SetPipeline(state.pipeline)
 	pass.SetBindGroup(0, state.viewProjBindGroup, nil)
+	pass.SetBindGroup(2, state.lightsBindGroup, nil)
 
 	for _, handle := range state.sortedHandles {
 		bucket := state.perHandle[handle]
@@ -356,11 +425,20 @@ func meshRelease(s any) {
 	for _, h := range state.perHandle {
 		h.release()
 	}
+	if state.lightsBindGroup != nil {
+		state.lightsBindGroup.Release()
+	}
+	if state.lightsBuffer != nil {
+		state.lightsBuffer.Release()
+	}
 	if state.viewProjBindGroup != nil {
 		state.viewProjBindGroup.Release()
 	}
 	if state.viewProjBuffer != nil {
 		state.viewProjBuffer.Release()
+	}
+	if state.lightsBgLayout != nil {
+		state.lightsBgLayout.Release()
 	}
 	if state.modelBgLayout != nil {
 		state.modelBgLayout.Release()
@@ -371,6 +449,36 @@ func meshRelease(s any) {
 	if state.pipeline != nil {
 		state.pipeline.Release()
 	}
+}
+
+// extractLights walks the engine world for entities with both a
+// [Light] and [transform.GlobalTransform] and packs them into the
+// uniform layout the mesh shader expects. The light's direction is
+// the negative third column of its GlobalTransform (the entity's
+// world-space -Z axis), matching nightshade's glTF convention.
+func extractLights(world *ecs.World) lightsUniform {
+	out := lightsUniform{}
+	lightMask := ecs.MaskOf[Light](world)
+	globalMask := ecs.MaskOf[transform.GlobalTransform](world)
+	world.ForEach(lightMask|globalMask, 0, func(_ ecs.Entity, table *ecs.Archetype, index int) {
+		if out.Count >= MaxLights {
+			return
+		}
+		lights, _ := ecs.Column[Light](world, table)
+		globals, _ := ecs.Column[transform.GlobalTransform](world, table)
+		light := &lights[index]
+		matrix := globals[index].Matrix
+		out.Data[out.Count] = lightDataUniform{
+			Position:  [3]float32{matrix[12], matrix[13], matrix[14]},
+			LightType: uint32(light.Type),
+			Direction: [3]float32{-matrix[8], -matrix[9], -matrix[10]},
+			Range:     light.Range,
+			Color:     [3]float32{light.Color[0], light.Color[1], light.Color[2]},
+			Intensity: light.Intensity,
+		}
+		out.Count++
+	})
+	return out
 }
 
 // releaseEntitySlot is the despawn-event handler. Looks up the

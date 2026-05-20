@@ -61,9 +61,9 @@ type TextureHandle struct {
 // graph resource.
 //
 // Versions are the dirty-detection mechanism. Each resource has a u64
-// stamp that increments every time the underlying handle changes --
-// external view replacement each frame, or transient (re)allocation on
-// resize. Passes record the version they cached a bind group against; if
+// stamp that increments every time the underlying handle changes
+// (external view replacement each frame, or transient reallocation on
+// resize). Passes record the version they cached a bind group against; if
 // the version moves they invalidate. This mirrors the
 // `versions: HashMap<ResourceId, u64>` table in nightshade's
 // rendergraph::resources.

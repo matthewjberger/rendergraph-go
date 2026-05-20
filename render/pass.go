@@ -165,7 +165,7 @@ type Pass struct {
 
 	// InvalidateBindGroups is called by the graph before Prepare when any
 	// resource bound to one of the pass's slots has changed version since
-	// the previous frame (i.e. its handle was replaced -- external view
+	// the previous frame (its handle was replaced; either external view
 	// refresh or transient reallocation). Mirrors nightshade's
 	// `PassNode::invalidate_bind_groups`. nil means "no caching to drop".
 	InvalidateBindGroups func(state any)

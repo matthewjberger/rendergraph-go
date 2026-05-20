@@ -6,20 +6,64 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) world_pos: vec3<f32>,
+};
+
+struct LightData {
+    position: vec3<f32>,
+    light_type: u32,
+    direction: vec3<f32>,
+    range: f32,
+    color: vec3<f32>,
+    intensity: f32,
+};
+
+struct Lights {
+    count: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+    data: array<LightData, 8>,
 };
 
 @group(0) @binding(0) var<uniform> view_proj: mat4x4<f32>;
 @group(1) @binding(0) var<storage, read> models: array<mat4x4<f32>>;
+@group(2) @binding(0) var<uniform> lights: Lights;
 
 @vertex
 fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32) -> VertexOutput {
     var out: VertexOutput;
-    out.position = view_proj * models[instance_index] * input.position;
+    let world = models[instance_index] * input.position;
+    out.position = view_proj * world;
     out.color = input.color;
+    out.world_pos = world.xyz;
     return out;
 }
 
 @fragment
 fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return in.color;
+    let normal = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
+
+    let ambient = vec3<f32>(0.18, 0.18, 0.2);
+    var lit = in.color.rgb * ambient;
+
+    for (var i: u32 = 0u; i < lights.count; i = i + 1u) {
+        let light = lights.data[i];
+        var n_dot_l = 0.0;
+        if (light.light_type == 0u) {
+            n_dot_l = abs(dot(normal, light.direction));
+        } else {
+            let to_light = light.position - in.world_pos;
+            let dist = length(to_light);
+            let l = to_light / max(dist, 0.0001);
+            n_dot_l = abs(dot(normal, l));
+            if (light.range > 0.0) {
+                let attenuation = max(0.0, 1.0 - dist / light.range);
+                n_dot_l = n_dot_l * attenuation * attenuation;
+            }
+        }
+        lit = lit + in.color.rgb * light.color * (light.intensity * n_dot_l);
+    }
+
+    return vec4<f32>(lit, in.color.a);
 }
