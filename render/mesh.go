@@ -29,10 +29,31 @@ type handleInstances struct {
 	materialBuffer *wgpu.Buffer
 	entityIdBuffer *wgpu.Buffer
 	bindGroup      *wgpu.BindGroup
+	textureView    *wgpu.TextureView
+	textureSampler *wgpu.Sampler
 	capacity       uint32
 
 	entityToSlot map[ecs.Entity]uint32
 	slotEntity   []ecs.Entity
+}
+
+// textureBindings returns the texture view + sampler the mesh pass
+// should bind for a given mesh handle. If the handle has a texture
+// attached, return its view/sampler; otherwise return the cache's
+// default 1x1 white so the shader's textureSample call still has a
+// valid binding (returning vec4(1.0)).
+func textureBindings(context *PassContext, handle MeshHandle) (*wgpu.TextureView, *wgpu.Sampler) {
+	cache := ecs.MustResource[TextureCacheResource](context.World).Cache
+	assets := ecs.MustResource[MeshAssetsResource](context.World).Assets
+	target := cache.White()
+	if entry, ok := assets.Lookup(handle); ok && entry.Texture != 0 {
+		target = entry.Texture
+	}
+	tex, ok := cache.Lookup(target)
+	if !ok {
+		return nil, nil
+	}
+	return tex.View, tex.Sampler
 }
 
 // releaseHandleInstances drops the bucket's GPU buffers and bind
@@ -142,13 +163,26 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 			},
 			{
 				Binding:    1,
-				Visibility: wgpu.ShaderStageVertex,
+				Visibility: wgpu.ShaderStageVertex | wgpu.ShaderStageFragment,
 				Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage},
 			},
 			{
 				Binding:    2,
 				Visibility: wgpu.ShaderStageVertex,
 				Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage},
+			},
+			{
+				Binding:    3,
+				Visibility: wgpu.ShaderStageFragment,
+				Texture: wgpu.TextureBindingLayout{
+					SampleType:    wgpu.TextureSampleTypeFloat,
+					ViewDimension: wgpu.TextureViewDimension2D,
+				},
+			},
+			{
+				Binding:    4,
+				Visibility: wgpu.ShaderStageFragment,
+				Sampler:    wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering},
 			},
 		},
 	})
@@ -250,6 +284,9 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 				Attributes: []wgpu.VertexAttribute{
 					{Format: wgpu.VertexFormatFloat32x4, Offset: 0, ShaderLocation: 0},
 					{Format: wgpu.VertexFormatFloat32x4, Offset: 16, ShaderLocation: 1},
+					{Format: wgpu.VertexFormatFloat32x4, Offset: 32, ShaderLocation: 2},
+					{Format: wgpu.VertexFormatFloat32x4, Offset: 48, ShaderLocation: 3},
+					{Format: wgpu.VertexFormatFloat32x4, Offset: 64, ShaderLocation: 4},
 				},
 			}},
 		},
@@ -374,7 +411,8 @@ func meshPrepare(s any, context *PassContext) error {
 			bucket.entityToSlot[entity] = slot
 			bucket.slotEntity = append(bucket.slotEntity, entity)
 			state.entityHandle[entity] = handle
-			if err := ensureHandleCapacity(bucket, context.Device, state.modelBgLayout); err != nil {
+			view, sampler := textureBindings(context, handle)
+			if err := ensureHandleCapacity(bucket, context.Device, state.modelBgLayout, view, sampler); err != nil {
 				return
 			}
 			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.modelBuffer, uint64(slot)*matrixSize, bytesOf(&global.Matrix))
@@ -609,9 +647,10 @@ const minHandleCapacity uint32 = 64
 // grows, the next frame's IterChanged pass refreshes every entity that
 // actually changed, and slots that didn't change need their content
 // reuploaded.
-func ensureHandleCapacity(h *handleInstances, device *wgpu.Device, layout *wgpu.BindGroupLayout) error {
+func ensureHandleCapacity(h *handleInstances, device *wgpu.Device, layout *wgpu.BindGroupLayout, view *wgpu.TextureView, sampler *wgpu.Sampler) error {
 	required := uint32(len(h.slotEntity))
-	if h.capacity >= required && h.modelBuffer != nil && h.materialBuffer != nil && h.entityIdBuffer != nil {
+	needRebind := h.textureView != view || h.textureSampler != sampler
+	if !needRebind && h.capacity >= required && h.modelBuffer != nil && h.materialBuffer != nil && h.entityIdBuffer != nil {
 		return nil
 	}
 	newCapacity := h.capacity
@@ -659,6 +698,8 @@ func ensureHandleCapacity(h *handleInstances, device *wgpu.Device, layout *wgpu.
 			{Binding: 0, Buffer: modelBuffer, Offset: 0, Size: wgpu.WholeSize},
 			{Binding: 1, Buffer: materialBuffer, Offset: 0, Size: wgpu.WholeSize},
 			{Binding: 2, Buffer: entityIdBuffer, Offset: 0, Size: wgpu.WholeSize},
+			{Binding: 3, TextureView: view},
+			{Binding: 4, Sampler: sampler},
 		},
 	})
 	if err != nil {
@@ -683,6 +724,8 @@ func ensureHandleCapacity(h *handleInstances, device *wgpu.Device, layout *wgpu.
 	h.materialBuffer = materialBuffer
 	h.entityIdBuffer = entityIdBuffer
 	h.bindGroup = bindGroup
+	h.textureView = view
+	h.textureSampler = sampler
 	h.capacity = newCapacity
 	return nil
 }

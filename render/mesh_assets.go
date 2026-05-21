@@ -42,19 +42,28 @@ func RegisterPrimitives(device *wgpu.Device, assets *MeshAssets) (Primitives, er
 }
 
 // MeshVertex is the input layout the engine's stock mesh shader
-// expects: position and color, each padded to vec4 stride. Custom
-// passes that bypass MeshAssets can use their own layout.
+// expects: position, normal, tangent, uv, color, each padded to
+// vec4 stride for std430 alignment. UV holds two coordinate sets:
+// xy is TEXCOORD_0, zw is TEXCOORD_1. Tangent's w stores handedness
+// for normal mapping. Custom passes that bypass MeshAssets can use
+// their own layout.
 type MeshVertex struct {
 	Position [4]float32
+	Normal   [4]float32
+	Tangent  [4]float32
+	UV       [4]float32
 	Color    [4]float32
 }
 
-// meshEntry is the renderer's per-mesh record: GPU vertex buffer plus
-// the vertex count to feed to Draw.
+// meshEntry is the renderer's per-mesh record: GPU vertex buffer,
+// vertex count, and an optional base-color texture handle. Meshes
+// loaded from glTF carry their texture here so the mesh pass binds
+// it automatically when drawing instances of that handle.
 type meshEntry struct {
 	Name        string
 	Vertices    *wgpu.Buffer
 	VertexCount uint32
+	Texture     TextureID
 	Bounds      BoundingVolume
 }
 
@@ -108,6 +117,16 @@ func (assets *MeshAssets) Lookup(handle MeshHandle) (*meshEntry, bool) {
 	return &assets.entries[handle], true
 }
 
+// AttachTexture sets the base-color texture handle for a mesh.
+// Callers register the texture via [TextureCache.Register] first and
+// then bind its handle here.
+func (assets *MeshAssets) AttachTexture(handle MeshHandle, texture TextureID) {
+	if int(handle) >= len(assets.entries) {
+		return
+	}
+	assets.entries[handle].Texture = texture
+}
+
 // Bounds returns the AABB of the registered mesh in its local
 // coordinate space. Zero-extent for an unknown handle.
 func (assets *MeshAssets) Bounds(handle MeshHandle) BoundingVolume {
@@ -134,20 +153,25 @@ func (assets *MeshAssets) Release() {
 // UnitTriangleVertices is a 1-unit XY triangle facing +Z, with red /
 // green / blue corners.
 var UnitTriangleVertices = []MeshVertex{
-	{Position: [4]float32{0.5, -0.5, 0.0, 1.0}, Color: [4]float32{1.0, 0.0, 0.0, 1.0}},
-	{Position: [4]float32{-0.5, -0.5, 0.0, 1.0}, Color: [4]float32{0.0, 1.0, 0.0, 1.0}},
-	{Position: [4]float32{0.0, 0.5, 0.0, 1.0}, Color: [4]float32{0.0, 0.0, 1.0, 1.0}},
+	{Position: [4]float32{0.5, -0.5, 0.0, 1.0}, Normal: defaultNormalZ, Tangent: defaultTangent, UV: [4]float32{1, 1, 0, 0}, Color: [4]float32{1.0, 0.0, 0.0, 1.0}},
+	{Position: [4]float32{-0.5, -0.5, 0.0, 1.0}, Normal: defaultNormalZ, Tangent: defaultTangent, UV: [4]float32{0, 1, 0, 0}, Color: [4]float32{0.0, 1.0, 0.0, 1.0}},
+	{Position: [4]float32{0.0, 0.5, 0.0, 1.0}, Normal: defaultNormalZ, Tangent: defaultTangent, UV: [4]float32{0.5, 0, 0, 0}, Color: [4]float32{0.0, 0.0, 1.0, 1.0}},
 }
+
+var (
+	defaultNormalZ = [4]float32{0, 0, 1, 0}
+	defaultTangent = [4]float32{1, 0, 0, 1}
+)
 
 // UnitQuadVertices is a 1-unit XY quad facing +Z, two triangles wound
 // CCW, with red / green / blue / yellow corners.
 var UnitQuadVertices = []MeshVertex{
-	{Position: [4]float32{-0.5, -0.5, 0.0, 1.0}, Color: [4]float32{1.0, 0.0, 0.0, 1.0}},
-	{Position: [4]float32{0.5, -0.5, 0.0, 1.0}, Color: [4]float32{0.0, 1.0, 0.0, 1.0}},
-	{Position: [4]float32{0.5, 0.5, 0.0, 1.0}, Color: [4]float32{0.0, 0.0, 1.0, 1.0}},
-	{Position: [4]float32{-0.5, -0.5, 0.0, 1.0}, Color: [4]float32{1.0, 0.0, 0.0, 1.0}},
-	{Position: [4]float32{0.5, 0.5, 0.0, 1.0}, Color: [4]float32{0.0, 0.0, 1.0, 1.0}},
-	{Position: [4]float32{-0.5, 0.5, 0.0, 1.0}, Color: [4]float32{1.0, 1.0, 0.0, 1.0}},
+	{Position: [4]float32{-0.5, -0.5, 0.0, 1.0}, Normal: defaultNormalZ, Tangent: defaultTangent, UV: [4]float32{0, 1, 0, 0}, Color: [4]float32{1.0, 0.0, 0.0, 1.0}},
+	{Position: [4]float32{0.5, -0.5, 0.0, 1.0}, Normal: defaultNormalZ, Tangent: defaultTangent, UV: [4]float32{1, 1, 0, 0}, Color: [4]float32{0.0, 1.0, 0.0, 1.0}},
+	{Position: [4]float32{0.5, 0.5, 0.0, 1.0}, Normal: defaultNormalZ, Tangent: defaultTangent, UV: [4]float32{1, 0, 0, 0}, Color: [4]float32{0.0, 0.0, 1.0, 1.0}},
+	{Position: [4]float32{-0.5, -0.5, 0.0, 1.0}, Normal: defaultNormalZ, Tangent: defaultTangent, UV: [4]float32{0, 1, 0, 0}, Color: [4]float32{1.0, 0.0, 0.0, 1.0}},
+	{Position: [4]float32{0.5, 0.5, 0.0, 1.0}, Normal: defaultNormalZ, Tangent: defaultTangent, UV: [4]float32{1, 0, 0, 0}, Color: [4]float32{0.0, 0.0, 1.0, 1.0}},
+	{Position: [4]float32{-0.5, 0.5, 0.0, 1.0}, Normal: defaultNormalZ, Tangent: defaultTangent, UV: [4]float32{0, 0, 0, 0}, Color: [4]float32{1.0, 1.0, 0.0, 1.0}},
 }
 
 // UnitCubeVertices is a 1-unit cube centered at origin, 36 vertices
@@ -163,36 +187,51 @@ var UnitCubeVertices = func() []MeshVertex {
 	cyan := [4]float32{0.2, 0.85, 0.9, 1.0}
 	magenta := [4]float32{0.85, 0.3, 0.85, 1.0}
 
-	face := func(a, b, c, d [3]float32, color [4]float32) []MeshVertex {
-		v := func(p [3]float32) MeshVertex {
-			return MeshVertex{Position: [4]float32{p[0], p[1], p[2], 1.0}, Color: color}
+	face := func(a, b, c, d [3]float32, normal [4]float32, color [4]float32) []MeshVertex {
+		v := func(p [3]float32, uv [2]float32) MeshVertex {
+			return MeshVertex{
+				Position: [4]float32{p[0], p[1], p[2], 1.0},
+				Normal:   normal,
+				Tangent:  defaultTangent,
+				UV:       [4]float32{uv[0], uv[1], 0, 0},
+				Color:    color,
+			}
 		}
-		return []MeshVertex{v(a), v(b), v(c), v(a), v(c), v(d)}
+		return []MeshVertex{
+			v(a, [2]float32{0, 1}), v(b, [2]float32{1, 1}), v(c, [2]float32{1, 0}),
+			v(a, [2]float32{0, 1}), v(c, [2]float32{1, 0}), v(d, [2]float32{0, 0}),
+		}
 	}
 
 	plusZ := face(
 		[3]float32{-s, -s, s}, [3]float32{s, -s, s},
-		[3]float32{s, s, s}, [3]float32{-s, s, s}, blue,
+		[3]float32{s, s, s}, [3]float32{-s, s, s},
+		[4]float32{0, 0, 1, 0}, blue,
 	)
 	minusZ := face(
 		[3]float32{s, -s, -s}, [3]float32{-s, -s, -s},
-		[3]float32{-s, s, -s}, [3]float32{s, s, -s}, yellow,
+		[3]float32{-s, s, -s}, [3]float32{s, s, -s},
+		[4]float32{0, 0, -1, 0}, yellow,
 	)
 	plusX := face(
 		[3]float32{s, -s, s}, [3]float32{s, -s, -s},
-		[3]float32{s, s, -s}, [3]float32{s, s, s}, red,
+		[3]float32{s, s, -s}, [3]float32{s, s, s},
+		[4]float32{1, 0, 0, 0}, red,
 	)
 	minusX := face(
 		[3]float32{-s, -s, -s}, [3]float32{-s, -s, s},
-		[3]float32{-s, s, s}, [3]float32{-s, s, -s}, cyan,
+		[3]float32{-s, s, s}, [3]float32{-s, s, -s},
+		[4]float32{-1, 0, 0, 0}, cyan,
 	)
 	plusY := face(
 		[3]float32{-s, s, s}, [3]float32{s, s, s},
-		[3]float32{s, s, -s}, [3]float32{-s, s, -s}, green,
+		[3]float32{s, s, -s}, [3]float32{-s, s, -s},
+		[4]float32{0, 1, 0, 0}, green,
 	)
 	minusY := face(
 		[3]float32{-s, -s, -s}, [3]float32{s, -s, -s},
-		[3]float32{s, -s, s}, [3]float32{-s, -s, s}, magenta,
+		[3]float32{s, -s, s}, [3]float32{-s, -s, s},
+		[4]float32{0, -1, 0, 0}, magenta,
 	)
 
 	out := make([]MeshVertex, 0, 36)
