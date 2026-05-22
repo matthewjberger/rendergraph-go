@@ -65,12 +65,17 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32)
 
 @fragment
 fn fragment_main(in: VertexOutput) -> FragmentOutput {
+    // Compute the screen-space derivatives unconditionally so WebGPU's
+    // strict uniform-control-flow rule for dpdx/dpdy is satisfied,
+    // then pick between the vertex normal and the derived face normal
+    // afterward.
+    let derived = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
     let n_len = length(in.world_normal);
     var normal: vec3<f32>;
     if (n_len > 0.001) {
         normal = in.world_normal / n_len;
     } else {
-        normal = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
+        normal = derived;
     }
 
     let sampled = textureSample(base_color_tex, base_color_sampler, in.uv);
