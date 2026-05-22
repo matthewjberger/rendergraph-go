@@ -94,6 +94,7 @@ struct ShadowUniforms {
     cascade_view_projections: array<mat4x4<f32>, 4>,
     cascade_splits: vec4<f32>,
     light_direction: vec4<f32>,
+    cascade_texel_world: vec4<f32>,
 };
 
 @group(1) @binding(9) var<uniform>       shadow_uniforms: ShadowUniforms;
@@ -266,10 +267,9 @@ fn select_cascade(view_depth: f32) -> i32 {
 
 fn sample_cascade(world_pos: vec3<f32>, world_normal: vec3<f32>, cascade: i32) -> f32 {
     let direction_to_light = -normalize(shadow_uniforms.light_direction.xyz);
-    let cascade_extent = shadow_uniforms.cascade_splits[cascade] * 2.0;
-    let texel_world = cascade_extent / 2048.0;
-    let normal_offset = world_normal * texel_world * 1.5;
-    let depth_offset = direction_to_light * 0.05;
+    let texel_world = shadow_uniforms.cascade_texel_world[cascade];
+    let normal_offset = world_normal * texel_world * 1.8;
+    let depth_offset = direction_to_light * 0.008;
     let offset_pos = world_pos + normal_offset + depth_offset;
     let shadow_clip = shadow_uniforms.cascade_view_projections[cascade] * vec4<f32>(offset_pos, 1.0);
     let shadow_ndc = shadow_clip.xyz / shadow_clip.w;

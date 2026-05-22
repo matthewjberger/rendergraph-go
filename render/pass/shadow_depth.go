@@ -61,6 +61,7 @@ type shadowMeshUniform struct {
 	LightViewProjections [NumShadowCascades]mgl32.Mat4
 	CascadeSplits        mgl32.Vec4
 	LightDirection       mgl32.Vec4
+	CascadeTexelWorld    mgl32.Vec4
 }
 
 type shadowDepthPassState struct {
@@ -372,9 +373,10 @@ func shadowDepthPrepare(s any, context *render.PassContext) error {
 		}
 		cascadeFar := splits[index]
 		corners := cameraFrustumCornersWorldRange(camera, hasCamera, aspect, cascadeNear, cascadeFar)
-		lightVP := fitLightFrustum(corners, lightDir)
+		lightVP, texelWorld := fitLightFrustum(corners, lightDir)
 		shadow.LightViewVPs[index] = lightVP
 		meshUniform.LightViewProjections[index] = lightVP
+		meshUniform.CascadeTexelWorld[index] = texelWorld
 
 		cascadeUniform := shadowCascadeUniform{LightViewProj: lightVP}
 		writeBuffer(context.Device, context.Queue, context.Encoder, shadow.CascadeVPs[index], 0, bytesOf(&cascadeUniform))
@@ -399,7 +401,7 @@ func scaledCascadeSplits(_ float32) [NumShadowCascades]float32 {
 // supplied world-space frustum corners. Average the corners to
 // pick the look-at target; transform to light space; ortho extents
 // come from per-axis min/max with a small pad.
-func fitLightFrustum(corners [8]mgl32.Vec3, lightDir mgl32.Vec3) mgl32.Mat4 {
+func fitLightFrustum(corners [8]mgl32.Vec3, lightDir mgl32.Vec3) (mgl32.Mat4, float32) {
 	center := mgl32.Vec3{0, 0, 0}
 	for _, corner := range corners {
 		center = center.Add(corner)
@@ -465,7 +467,12 @@ func fitLightFrustum(corners [8]mgl32.Vec3, lightDir mgl32.Vec3) mgl32.Mat4 {
 	minZ -= zPad
 	maxZ += zPad
 	lightProj := orthoZO(minX, maxX, minY, maxY, -maxZ, -minZ)
-	return lightProj.Mul4(lightView)
+	largest := maxX - minX
+	if (maxY - minY) > largest {
+		largest = maxY - minY
+	}
+	texelWorld := largest / float32(ShadowMapSize)
+	return lightProj.Mul4(lightView), texelWorld
 }
 
 // shadowDepthExecute draws every RenderMesh bucket the mesh pass
