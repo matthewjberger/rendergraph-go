@@ -9,6 +9,10 @@ struct Uniform {
     bloom_intensity: f32,
     bloom_enabled: f32,
     ssao_enabled: f32,
+    ssgi_enabled: f32,
+    ssgi_intensity: f32,
+    _pad0: f32,
+    _pad1: f32,
 };
 
 @group(0) @binding(0) var hdr_texture: texture_2d<f32>;
@@ -18,6 +22,8 @@ struct Uniform {
 @group(0) @binding(4) var bloom_sampler: sampler;
 @group(0) @binding(5) var ssao_texture: texture_2d<f32>;
 @group(0) @binding(6) var ssao_sampler: sampler;
+@group(0) @binding(7) var ssgi_texture: texture_2d<f32>;
+@group(0) @binding(8) var ssgi_sampler: sampler;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -65,6 +71,10 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if u.ssao_enabled > 0.5 {
         let ao = textureSample(ssao_texture, ssao_sampler, in.uv).r;
         color = color * ao;
+    }
+    if u.ssgi_enabled > 0.5 {
+        let indirect = textureSample(ssgi_texture, ssgi_sampler, in.uv).rgb;
+        color = color + indirect * u.ssgi_intensity;
     }
     if u.bloom_enabled > 0.5 {
         let bloom = textureSample(bloom_texture, bloom_sampler, in.uv).rgb;

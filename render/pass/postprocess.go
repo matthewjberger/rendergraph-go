@@ -19,6 +19,10 @@ type postprocessUniform struct {
 	BloomIntensity float32
 	BloomEnabled   float32
 	SsaoEnabled    float32
+	SsgiEnabled    float32
+	SsgiIntensity  float32
+	Pad0           float32
+	Pad1           float32
 }
 
 type postprocessPassState struct {
@@ -31,6 +35,7 @@ type postprocessPassState struct {
 	dummyTexture    *wgpu.Texture
 	dummyView       *wgpu.TextureView
 	lastSsaoView    *wgpu.TextureView
+	lastSsgiView    *wgpu.TextureView
 }
 
 // NewPostProcessPass builds the HDR -> LDR composition pass. The
@@ -114,6 +119,19 @@ func NewPostProcessPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, b
 			},
 			{
 				Binding:    6,
+				Visibility: wgpu.ShaderStageFragment,
+				Sampler:    wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering},
+			},
+			{
+				Binding:    7,
+				Visibility: wgpu.ShaderStageFragment,
+				Texture: wgpu.TextureBindingLayout{
+					SampleType:    wgpu.TextureSampleTypeFloat,
+					ViewDimension: wgpu.TextureViewDimension2D,
+				},
+			},
+			{
+				Binding:    8,
 				Visibility: wgpu.ShaderStageFragment,
 				Sampler:    wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering},
 			},
@@ -234,15 +252,28 @@ func postprocessPrepare(s any, context *render.PassContext) error {
 		ssaoEnabled = 1.0
 	}
 
+	ssgiView := state.dummyView
+	ssgiEnabled := float32(0.0)
+	ssgiIntensity := float32(1.0)
+	if resource, ok := ecs.Resource[SsgiResource](context.World); ok && resource != nil && resource.Result != nil && resource.Result.View != nil {
+		ssgiView = resource.Result.View
+		ssgiEnabled = 1.0
+	}
+	if ssgiCfg, ok := ecs.Resource[SsgiSettings](context.World); ok && ssgiCfg != nil {
+		ssgiIntensity = ssgiCfg.Intensity
+	}
+
 	uniform := postprocessUniform{
 		Exposure:       settings.Exposure,
 		BloomIntensity: settings.BloomIntensity,
 		BloomEnabled:   bloomEnabled,
 		SsaoEnabled:    ssaoEnabled,
+		SsgiEnabled:    ssgiEnabled,
+		SsgiIntensity:  ssgiIntensity,
 	}
 	writeBuffer(context.Device, context.Queue, context.Encoder, state.uniformBuffer, 0, bytesOf(&uniform))
 
-	if state.bindGroup != nil && state.lastSsaoView == ssaoView {
+	if state.bindGroup != nil && state.lastSsaoView == ssaoView && state.lastSsgiView == ssgiView {
 		return nil
 	}
 	if state.bindGroup != nil {
@@ -250,6 +281,7 @@ func postprocessPrepare(s any, context *render.PassContext) error {
 		state.bindGroup = nil
 	}
 	state.lastSsaoView = ssaoView
+	state.lastSsgiView = ssgiView
 
 	inputView, err := context.TextureView("input")
 	if err != nil {
@@ -267,6 +299,8 @@ func postprocessPrepare(s any, context *render.PassContext) error {
 			{Binding: 4, Sampler: state.sampler},
 			{Binding: 5, TextureView: ssaoView},
 			{Binding: 6, Sampler: state.sampler},
+			{Binding: 7, TextureView: ssgiView},
+			{Binding: 8, Sampler: state.sampler},
 		},
 	})
 	if err != nil {

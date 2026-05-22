@@ -63,6 +63,7 @@ func initializeWorldEntities(worlds app.Worlds, meshes []asset.MeshHandle, meshN
 
 	spawnLightOrbs(worlds, orbMesh)
 	spawnGroundPlane(worlds)
+	spawnDemoCamera(worlds)
 
 	engineMask := ecs.MustMaskOf[transform.LocalTransform](worlds.Engine) |
 		ecs.MustMaskOf[transform.GlobalTransform](worlds.Engine) |
@@ -267,4 +268,26 @@ func spawnSpotOrb(worlds app.Worlds, orbMesh asset.MeshHandle, name string, posi
 		ShadowBias:     0.005,
 	})
 	ecs.Set(worlds.Engine, entity, app.Name{Value: name})
+}
+
+// spawnDemoCamera spawns a tagged scene-camera entity so the
+// camera gizmo system has something to draw. The entity has no
+// render mesh; the gizmo is the only visualization.
+func spawnDemoCamera(worlds app.Worlds) {
+	mask := ecs.MustMaskOf[transform.LocalTransform](worlds.Engine) |
+		ecs.MustMaskOf[transform.GlobalTransform](worlds.Engine) |
+		ecs.MustMaskOf[transform.LocalTransformDirty](worlds.Engine) |
+		ecs.MustMaskOf[render.CameraMarker](worlds.Engine) |
+		ecs.MustMaskOf[app.Name](worlds.Engine)
+	entity := worlds.Engine.Spawn(mask)
+	yaw := transform.QuatFromAxisAngle(float32(math.Pi/4), transform.Vec3{0, 1, 0})
+	pitch := transform.QuatFromAxisAngle(-float32(math.Pi/12), transform.Vec3{1, 0, 0})
+	ecs.Set(worlds.Engine, entity, transform.LocalTransform{
+		Translation: transform.Vec3{-3, 1.5, 4},
+		Rotation:    yaw.Mul(pitch),
+		Scale:       transform.Vec3{1, 1, 1},
+	})
+	ecs.Set(worlds.Engine, entity, transform.IdentityGlobalTransform())
+	ecs.Set(worlds.Engine, entity, render.CameraMarker{})
+	ecs.Set(worlds.Engine, entity, app.Name{Value: "Camera"})
 }

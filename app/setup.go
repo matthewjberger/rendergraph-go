@@ -39,6 +39,7 @@ func NewEngineWorld(renderer *render.Renderer) (*ecs.World, error) {
 	ecs.Register[asset.Material](engine)
 	ecs.Register[asset.AnimationPlayer](engine)
 	ecs.Register[render.Light](engine)
+	ecs.Register[render.CameraMarker](engine)
 	ecs.Register[render.Selected](engine)
 	ecs.Register[Name](engine)
 

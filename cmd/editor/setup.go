@@ -136,6 +136,9 @@ func editorApp() *app.App {
 			if _, _, err := pass.AddSsaoPass(renderer, renderer.AspectRatio); err != nil {
 				log.Fatal(err)
 			}
+			if _, _, err := pass.AddSsgiPass(renderer, renderer.AspectRatio); err != nil {
+				log.Fatal(err)
+			}
 			bloomPass, err := pass.AddBloomPass(renderer)
 			if err != nil {
 				log.Fatal(err)
@@ -162,6 +165,7 @@ func editorApp() *app.App {
 		},
 		PreRender: func(engine *ecs.World) {
 			drawLightGizmos(engine)
+			drawCameraGizmos(engine)
 		},
 	}
 }
