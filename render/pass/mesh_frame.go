@@ -241,6 +241,10 @@ func meshExecute(s any, context *render.PassContext) error {
 	if err != nil {
 		return err
 	}
+	viewNormalsAttachment, err := context.ColorAttachment("view_normals")
+	if err != nil {
+		return err
+	}
 	depthAttachment, err := context.DepthAttachment("depth")
 	if err != nil {
 		return err
@@ -248,7 +252,7 @@ func meshExecute(s any, context *render.PassContext) error {
 
 	pass := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		Label:                  "mesh",
-		ColorAttachments:       []wgpu.RenderPassColorAttachment{colorAttachment, entityIdAttachment},
+		ColorAttachments:       []wgpu.RenderPassColorAttachment{colorAttachment, entityIdAttachment, viewNormalsAttachment},
 		DepthStencilAttachment: &depthAttachment,
 	})
 	pass.SetPipeline(state.pipeline)

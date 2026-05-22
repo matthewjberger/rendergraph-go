@@ -37,6 +37,7 @@ func AddMeshPass(renderer *render.Renderer, arrays *asset.MaterialTextureArrays,
 		{Slot: "color", ResourceID: renderer.SceneColorID},
 		{Slot: "depth", ResourceID: renderer.DepthID},
 		{Slot: "entity_id", ResourceID: renderer.EntityIdID},
+		{Slot: "view_normals", ResourceID: renderer.ViewNormalsID},
 	}); err != nil {
 		return nil, err
 	}

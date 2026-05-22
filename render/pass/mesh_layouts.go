@@ -59,7 +59,7 @@ func createGlobalBgLayout(device *wgpu.Device) (*wgpu.BindGroupLayout, error) {
 			},
 			{
 				Binding:    4,
-				Visibility: wgpu.ShaderStageFragment,
+				Visibility: wgpu.ShaderStageVertex | wgpu.ShaderStageFragment,
 				Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeUniform},
 			},
 			{
@@ -305,6 +305,10 @@ func createMeshPipeline(
 				},
 				{
 					Format:    render.EntityIdFormat,
+					WriteMask: wgpu.ColorWriteMaskAll,
+				},
+				{
+					Format:    render.HdrFormat,
 					WriteMask: wgpu.ColorWriteMaskAll,
 				},
 			},

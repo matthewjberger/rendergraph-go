@@ -18,7 +18,7 @@ type postprocessUniform struct {
 	Exposure       float32
 	BloomIntensity float32
 	BloomEnabled   float32
-	Pad0           float32
+	SsaoEnabled    float32
 }
 
 type postprocessPassState struct {
@@ -30,6 +30,7 @@ type postprocessPassState struct {
 	bloom           *render.Pass
 	dummyTexture    *wgpu.Texture
 	dummyView       *wgpu.TextureView
+	lastSsaoView    *wgpu.TextureView
 }
 
 // NewPostProcessPass builds the HDR -> LDR composition pass. The
@@ -100,6 +101,19 @@ func NewPostProcessPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, b
 			},
 			{
 				Binding:    4,
+				Visibility: wgpu.ShaderStageFragment,
+				Sampler:    wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering},
+			},
+			{
+				Binding:    5,
+				Visibility: wgpu.ShaderStageFragment,
+				Texture: wgpu.TextureBindingLayout{
+					SampleType:    wgpu.TextureSampleTypeFloat,
+					ViewDimension: wgpu.TextureViewDimension2D,
+				},
+			},
+			{
+				Binding:    6,
 				Visibility: wgpu.ShaderStageFragment,
 				Sampler:    wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering},
 			},
@@ -213,16 +227,29 @@ func postprocessPrepare(s any, context *render.PassContext) error {
 		}
 	}
 
+	ssaoView := state.dummyView
+	ssaoEnabled := float32(0.0)
+	if resource, ok := ecs.Resource[SsaoResource](context.World); ok && resource != nil && resource.Result != nil && resource.Result.View != nil {
+		ssaoView = resource.Result.View
+		ssaoEnabled = 1.0
+	}
+
 	uniform := postprocessUniform{
 		Exposure:       settings.Exposure,
 		BloomIntensity: settings.BloomIntensity,
 		BloomEnabled:   bloomEnabled,
+		SsaoEnabled:    ssaoEnabled,
 	}
 	writeBuffer(context.Device, context.Queue, context.Encoder, state.uniformBuffer, 0, bytesOf(&uniform))
 
-	if state.bindGroup != nil {
+	if state.bindGroup != nil && state.lastSsaoView == ssaoView {
 		return nil
 	}
+	if state.bindGroup != nil {
+		state.bindGroup.Release()
+		state.bindGroup = nil
+	}
+	state.lastSsaoView = ssaoView
 
 	inputView, err := context.TextureView("input")
 	if err != nil {
@@ -238,6 +265,8 @@ func postprocessPrepare(s any, context *render.PassContext) error {
 			{Binding: 2, Buffer: state.uniformBuffer, Offset: 0, Size: uint64(unsafe.Sizeof(postprocessUniform{}))},
 			{Binding: 3, TextureView: bloomView},
 			{Binding: 4, Sampler: state.sampler},
+			{Binding: 5, TextureView: ssaoView},
+			{Binding: 6, Sampler: state.sampler},
 		},
 	})
 	if err != nil {

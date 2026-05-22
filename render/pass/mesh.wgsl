@@ -22,6 +22,7 @@ struct VertexOutput {
     @location(4) uv: vec2<f32>,
     @location(5) @interpolate(flat) entity_id: u32,
     @location(6) @interpolate(flat) material_index: u32,
+    @location(7) view_normal: vec3<f32>,
 };
 
 struct Light {
@@ -219,8 +220,9 @@ fn get_normal(
 }
 
 struct FragmentOutput {
-    @location(0) color:     vec4<f32>,
-    @location(1) entity_id: u32,
+    @location(0) color:        vec4<f32>,
+    @location(1) entity_id:    u32,
+    @location(2) view_normal:  vec4<f32>,
 };
 
 fn apply_wrap_axis(uv: f32, mode: u32) -> f32 {
@@ -492,6 +494,8 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32)
     out.color = input.color;
     out.entity_id = entity_ids[instance_index];
     out.material_index = material_indices[instance_index];
+    let view_mat3 = mat3x3<f32>(view_matrix[0].xyz, view_matrix[1].xyz, view_matrix[2].xyz);
+    out.view_normal = view_mat3 * out.world_normal;
     return out;
 }
 
@@ -582,6 +586,7 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
         var out_unlit: FragmentOutput;
         out_unlit.color = vec4<f32>(albedo + emissive, base_color.a);
         out_unlit.entity_id = in.entity_id;
+        out_unlit.view_normal = vec4<f32>(normalize(in.view_normal), 1.0);
         return out_unlit;
     }
 
@@ -664,5 +669,6 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
     var output: FragmentOutput;
     output.color = vec4<f32>(color, base_color.a);
     output.entity_id = in.entity_id;
+    output.view_normal = vec4<f32>(normalize(in.view_normal), 1.0);
     return output;
 }

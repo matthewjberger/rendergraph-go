@@ -50,6 +50,7 @@ type Renderer struct {
 	DepthID         ResourceID
 	EntityIdID      ResourceID
 	SelectionMaskID ResourceID
+	ViewNormalsID   ResourceID
 }
 
 // NewRenderer acquires an adapter and device from the instance, configures
@@ -100,6 +101,7 @@ func NewRenderer(instance *wgpu.Instance, surface *wgpu.Surface, width, height u
 	renderer.DepthID = renderer.Graph.ResourceByName("depth")
 	renderer.EntityIdID = renderer.Graph.ResourceByName("entity_id")
 	renderer.SelectionMaskID = renderer.Graph.ResourceByName("selection_mask")
+	renderer.ViewNormalsID = renderer.Graph.ResourceByName("view_normals")
 
 	return renderer, nil
 }
@@ -175,6 +177,18 @@ func defaultGraph(surfaceFormat wgpu.TextureFormat, width, height uint32) *Graph
 			Usage:  wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
 		},
 		ClearColor: &clearMask,
+	})
+	clearViewNormals := wgpu.Color{R: 0, G: 0, B: 0, A: 0}
+	graph.AddColorTexture(ResourceDescriptor{
+		Name: "view_normals",
+		Kind: ResourceKindTransientColor,
+		Texture: TextureDescriptor{
+			Format: HdrFormat,
+			Width:  width,
+			Height: height,
+			Usage:  wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
+		},
+		ClearColor: &clearViewNormals,
 	})
 	graph.AddColorTexture(ResourceDescriptor{
 		Name: "swapchain",
