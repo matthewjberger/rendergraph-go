@@ -11,7 +11,7 @@ import (
 // renderer's graph as a writer of scene_color. Returns the pass for
 // callers that want a reference; the graph owns its release.
 func AddSkyPass(renderer *render.Renderer) (*render.Pass, error) {
-	pass, err := NewSkyPass(renderer.Device, renderer.SurfaceFormat, renderer.AspectRatio)
+	pass, err := NewSkyPass(renderer.Device, render.HdrFormat, renderer.AspectRatio)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +29,7 @@ func AddSkyPass(renderer *render.Renderer) (*render.Pass, error) {
 // texture source); ibl is the [IBL] bundle the fragment shader
 // samples for ambient diffuse + specular.
 func AddMeshPass(renderer *render.Renderer, arrays *asset.MaterialTextureArrays, ibl *IBL) (*render.Pass, error) {
-	pass, err := NewMeshPass(renderer.Device, renderer.SurfaceFormat, renderer.AspectRatio, arrays, ibl)
+	pass, err := NewMeshPass(renderer.Device, render.HdrFormat, renderer.AspectRatio, arrays, ibl)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func AddMeshPass(renderer *render.Renderer, arrays *asset.MaterialTextureArrays,
 // + depth (loads, no clear) so it composites over whatever the mesh
 // pass already wrote.
 func AddGridPass(renderer *render.Renderer) (*render.Pass, error) {
-	pass, err := NewGridPass(renderer.Device, renderer.SurfaceFormat, renderer.AspectRatio)
+	pass, err := NewGridPass(renderer.Device, render.HdrFormat, renderer.AspectRatio)
 	if err != nil {
 		return nil, err
 	}
@@ -80,12 +80,30 @@ func AddFxaaPass(renderer *render.Renderer) (*render.Pass, render.ResourceID, er
 		return nil, 0, err
 	}
 	if err := renderer.Graph.AddPass(pass, []render.SlotBinding{
-		{Slot: "input", ResourceID: renderer.SceneColorID},
+		{Slot: "input", ResourceID: renderer.LdrColorID},
 		{Slot: "output", ResourceID: fxaaOutputID},
 	}); err != nil {
 		return nil, 0, err
 	}
 	return pass, fxaaOutputID, nil
+}
+
+// AddPostProcessPass builds the HDR -> LDR tonemap pass. Reads
+// scene_color (HDR) and writes ldr_color (surface format). Must
+// run after every 3D pass that writes scene_color (sky / mesh /
+// grid / lines / outline) and before fxaa + UI passes.
+func AddPostProcessPass(renderer *render.Renderer) (*render.Pass, error) {
+	pass, err := NewPostProcessPass(renderer.Device, renderer.SurfaceFormat)
+	if err != nil {
+		return nil, err
+	}
+	if err := renderer.Graph.AddPass(pass, []render.SlotBinding{
+		{Slot: "input", ResourceID: renderer.SceneColorID},
+		{Slot: "output", ResourceID: renderer.LdrColorID},
+	}); err != nil {
+		return nil, err
+	}
+	return pass, nil
 }
 
 // AddPickingPass builds the picking pass and wires it to read the
@@ -157,7 +175,7 @@ func AddSelectionMaskPass(renderer *render.Renderer) (*render.Pass, error) {
 // selection_mask, alpha-blends an outline color into scene_color
 // along the dilated mask boundary.
 func AddOutlinePass(renderer *render.Renderer) (*render.Pass, error) {
-	pass, err := NewOutlinePass(renderer.Device, renderer.SurfaceFormat, func() (uint32, uint32) {
+	pass, err := NewOutlinePass(renderer.Device, render.HdrFormat, func() (uint32, uint32) {
 		return renderer.Config.Width, renderer.Config.Height
 	})
 	if err != nil {

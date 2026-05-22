@@ -23,6 +23,12 @@ import (
 // DepthFormat is the depth target the renderer creates.
 const DepthFormat = wgpu.TextureFormatDepth32Float
 
+// HdrFormat is the color format every 3D rendering pass targets:
+// 16-bit float per channel, so HDR specular highlights, emissive
+// values, and tonemap inputs stay above 1.0 until the dedicated
+// postprocess pass maps them down for display.
+const HdrFormat = wgpu.TextureFormatRGBA16Float
+
 // Renderer owns the long-lived WGPU surface/device/queue plus the
 // render graph and the ids of the graph's standard resources
 // (swapchain, scene_color, depth). Mesh registries and primitive
@@ -40,6 +46,7 @@ type Renderer struct {
 	Graph           *Graph
 	SwapchainID     ResourceID
 	SceneColorID    ResourceID
+	LdrColorID      ResourceID
 	DepthID         ResourceID
 	EntityIdID      ResourceID
 	SelectionMaskID ResourceID
@@ -89,6 +96,7 @@ func NewRenderer(instance *wgpu.Instance, surface *wgpu.Surface, width, height u
 	renderer.Graph = defaultGraph(renderer.SurfaceFormat, width, height)
 	renderer.SwapchainID = renderer.Graph.ResourceByName("swapchain")
 	renderer.SceneColorID = renderer.Graph.ResourceByName("scene_color")
+	renderer.LdrColorID = renderer.Graph.ResourceByName("ldr_color")
 	renderer.DepthID = renderer.Graph.ResourceByName("depth")
 	renderer.EntityIdID = renderer.Graph.ResourceByName("entity_id")
 	renderer.SelectionMaskID = renderer.Graph.ResourceByName("selection_mask")
@@ -102,10 +110,10 @@ func NewRenderer(instance *wgpu.Instance, surface *wgpu.Surface, width, height u
 // scene_color into it). It does not register any passes; the application
 // adds those in its configure-render-graph hook.
 //
-// scene_color's format matches the surface so the final present
-// pass can blit without a tonemap. Once a dedicated postprocess
-// pass owns exposure + tonemap, this should switch to
-// wgpu.TextureFormatRGBA16Float for HDR shading.
+// scene_color is HDR (Rgba16Float) so 3D rendering can preserve
+// linear values >1.0 until the postprocess pass tonemaps into
+// ldr_color (surface format). UI and gizmo passes write LDR and
+// target ldr_color directly.
 func defaultGraph(surfaceFormat wgpu.TextureFormat, width, height uint32) *Graph {
 	graph := NewGraph()
 	clearColor := wgpu.Color{R: 0.19, G: 0.24, B: 0.42, A: 1.0}
@@ -114,12 +122,24 @@ func defaultGraph(surfaceFormat wgpu.TextureFormat, width, height uint32) *Graph
 		Name: "scene_color",
 		Kind: ResourceKindTransientColor,
 		Texture: TextureDescriptor{
-			Format: surfaceFormat,
+			Format: HdrFormat,
 			Width:  width,
 			Height: height,
 			Usage:  wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopySrc,
 		},
 		ClearColor: &clearColor,
+	})
+	clearLdr := wgpu.Color{R: 0.19, G: 0.24, B: 0.42, A: 1.0}
+	graph.AddColorTexture(ResourceDescriptor{
+		Name: "ldr_color",
+		Kind: ResourceKindTransientColor,
+		Texture: TextureDescriptor{
+			Format: surfaceFormat,
+			Width:  width,
+			Height: height,
+			Usage:  wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopySrc,
+		},
+		ClearColor: &clearLdr,
 	})
 	graph.AddDepthTexture(ResourceDescriptor{
 		Name: "depth",

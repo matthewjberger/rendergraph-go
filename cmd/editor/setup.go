@@ -119,6 +119,9 @@ func editorApp() *app.App {
 			if _, err := pass.AddOutlinePass(renderer); err != nil {
 				log.Fatal(err)
 			}
+			if _, err := pass.AddPostProcessPass(renderer); err != nil {
+				log.Fatal(err)
+			}
 			_, fxaaOutputID, err := pass.AddFxaaPass(renderer)
 			if err != nil {
 				log.Fatal(err)

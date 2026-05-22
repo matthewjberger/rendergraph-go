@@ -239,19 +239,6 @@ fn fresnel_schlick_roughness(cos_theta: f32, f0: vec3<f32>, roughness: f32) -> v
     return f0 + (max(invR, f0) - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
-// tonemap_aces is the Krzysztof Narkowicz ACES filmic
-// approximation. Maps linear HDR (0..inf) into perceptually-
-// encoded LDR (0..1) so the IBL specular term doesn't clip to
-// white the moment a metallic surface points at the sky.
-fn tonemap_aces(color: vec3<f32>) -> vec3<f32> {
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
 fn range_attenuation(range: f32, distance: f32) -> f32 {
     if (range <= 0.0) {
         return 1.0;
@@ -477,13 +464,8 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
     ambient = mix(ambient, ambient * occlusion, mat.occlusion_strength);
     let color = ambient + lo + emissive;
 
-    // Tonemap inline because scene_color is the LDR surface
-    // format. Without it, HDR specular IBL values >1 silently
-    // clip on attachment write. When scene_color moves to
-    // Rgba16Float and a dedicated postprocess pass owns
-    // exposure + tonemap, this call goes away.
     var output: FragmentOutput;
-    output.color = vec4<f32>(tonemap_aces(color), base_color.a);
+    output.color = vec4<f32>(color, base_color.a);
     output.entity_id = in.entity_id;
     return output;
 }

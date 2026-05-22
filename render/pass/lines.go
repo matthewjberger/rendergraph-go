@@ -326,7 +326,7 @@ func ensureLinesCapacity(state *linesPassState, device *wgpu.Device, required ui
 // it to write into the scene color attachment with the scene depth
 // buffer, so world-space lines respect the mesh-pass depth.
 func AddLinesPass(renderer *render.Renderer) (*render.Pass, error) {
-	pass, err := NewLinesPass(renderer.Device, renderer.SurfaceFormat, renderer.AspectRatio)
+	pass, err := NewLinesPass(renderer.Device, render.HdrFormat, renderer.AspectRatio)
 	if err != nil {
 		return nil, err
 	}
