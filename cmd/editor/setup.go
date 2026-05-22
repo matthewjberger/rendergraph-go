@@ -100,8 +100,9 @@ func editorApp() *app.App {
 				log.Fatal(err)
 			}
 			arrays := ecs.MustResource[asset.MaterialTextureArraysResource](world).Arrays
+			registry := ecs.MustResource[asset.MaterialRegistryResource](world).Registry
 			ibl := ecs.MustResource[pass.IBLResource](world).IBL
-			if _, err := pass.AddMeshPass(renderer, arrays, ibl); err != nil {
+			if _, err := pass.AddMeshPass(renderer, arrays, registry, ibl); err != nil {
 				log.Fatal(err)
 			}
 			if _, err := pass.AddPickingPass(renderer); err != nil {

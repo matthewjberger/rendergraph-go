@@ -83,6 +83,11 @@ func createGlobalBgLayout(device *wgpu.Device) (*wgpu.BindGroupLayout, error) {
 				Visibility: wgpu.ShaderStageFragment,
 				Sampler:    wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering},
 			},
+			{
+				Binding:    8,
+				Visibility: wgpu.ShaderStageFragment,
+				Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage},
+			},
 		},
 	})
 	if err != nil {
@@ -92,10 +97,11 @@ func createGlobalBgLayout(device *wgpu.Device) (*wgpu.BindGroupLayout, error) {
 }
 
 // createHandleBgLayout returns the group 2 bind-group layout: the
-// per-handle storage buffers (models / materials / entity_ids).
-// Models + entity_ids are vertex-only; materials are read in both
-// stages because the vertex stage uses material_index for flat
-// interpolation and the fragment stage actually reads the data.
+// per-handle storage buffers (models / material_indices /
+// entity_ids). All vertex-only — the vertex stage flat-interpolates
+// the material_index into the fragment shader, which then looks the
+// MaterialGPU up in the global registry buffer bound at group 1
+// binding 8.
 func createHandleBgLayout(device *wgpu.Device) (*wgpu.BindGroupLayout, error) {
 	layout, err := device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
 		Label: "mesh per-handle bind group layout",
@@ -107,7 +113,7 @@ func createHandleBgLayout(device *wgpu.Device) (*wgpu.BindGroupLayout, error) {
 			},
 			{
 				Binding:    1,
-				Visibility: wgpu.ShaderStageVertex | wgpu.ShaderStageFragment,
+				Visibility: wgpu.ShaderStageVertex,
 				Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage},
 			},
 			{
@@ -295,14 +301,16 @@ func createViewProjBindGroup(device *wgpu.Device, layout *wgpu.BindGroupLayout, 
 }
 
 // createGlobalBindGroup builds the group 1 bind group from the
-// cluster compute resources + the material texture arrays. Bound
-// once at pass setup; the underlying buffers / texture views are
-// stable across frames so the bind group never needs rebinding.
+// cluster compute resources + the material texture arrays + the
+// global material registry. The registry buffer can grow at
+// runtime; when it does, the caller is responsible for releasing
+// this bind group and rebuilding via this helper.
 func createGlobalBindGroup(
 	device *wgpu.Device,
 	layout *wgpu.BindGroupLayout,
 	clusters *clusterResources,
 	arrays *asset.MaterialTextureArrays,
+	registry *asset.MaterialRegistry,
 ) (*wgpu.BindGroup, error) {
 	bg, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 		Label:  "mesh global bind group",
@@ -316,6 +324,7 @@ func createGlobalBindGroup(
 			{Binding: 5, TextureView: arrays.SRGBView},
 			{Binding: 6, TextureView: arrays.LinearView},
 			{Binding: 7, Sampler: arrays.Sampler},
+			{Binding: 8, Buffer: registry.Buffer(), Offset: 0, Size: wgpu.WholeSize},
 		},
 	})
 	if err != nil {

@@ -78,11 +78,19 @@ func meshPrepare(s any, context *render.PassContext) error {
 			}
 			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.modelBuffer, uint64(slot)*matrixSize, bytesOf(&global.Matrix))
 
-			material := asset.DefaultMaterial().ToGPU()
-			if mat, ok := ecs.Get[asset.Material](context.World, entity); ok {
-				material = mat.ToGPU()
+			registry := ecs.MustResource[asset.MaterialRegistryResource](context.World).Registry
+			materialID, isNew := registry.AssignID(entity)
+			if isNew {
+				if _, err := registry.EnsureCapacity(registry.Count()); err != nil {
+					return
+				}
+				material := asset.DefaultMaterial().ToGPU()
+				if mat, ok := ecs.Get[asset.Material](context.World, entity); ok {
+					material = mat.ToGPU()
+				}
+				registry.Write(context.Queue, materialID, material)
 			}
-			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.materialBuffer, uint64(slot)*asset.MaterialGPUSize, bytesOf(&material))
+			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.materialIndexBuffer, uint64(slot)*4, bytesOf(&materialID))
 
 			entityID := entity.ID
 			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.entityIdBuffer, uint64(slot)*4, bytesOf(&entityID))
@@ -115,20 +123,13 @@ func meshPrepare(s any, context *render.PassContext) error {
 		renderMeshMask,
 		0,
 		func(entity ecs.Entity, material *asset.Material) {
-			mesh, ok := ecs.Get[asset.RenderMesh](context.World, entity)
-			if !ok {
-				return
-			}
-			bucket, ok := state.perHandle[mesh.Mesh]
-			if !ok {
-				return
-			}
-			slot, ok := bucket.entityToSlot[entity]
+			registry := ecs.MustResource[asset.MaterialRegistryResource](context.World).Registry
+			materialID, ok := registry.IDFor(entity)
 			if !ok {
 				return
 			}
 			data := material.ToGPU()
-			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.materialBuffer, uint64(slot)*asset.MaterialGPUSize, bytesOf(&data))
+			registry.Write(context.Queue, materialID, data)
 		},
 	)
 

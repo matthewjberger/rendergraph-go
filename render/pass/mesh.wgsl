@@ -88,10 +88,11 @@ struct Material {
 @group(1) @binding(5) var material_srgb_array:   texture_2d_array<f32>;
 @group(1) @binding(6) var material_linear_array: texture_2d_array<f32>;
 @group(1) @binding(7) var material_sampler:      sampler;
+@group(1) @binding(8) var<storage, read> materials: array<Material>;
 
-@group(2) @binding(0) var<storage, read> models:     array<mat4x4<f32>>;
-@group(2) @binding(1) var<storage, read> materials:  array<Material>;
-@group(2) @binding(2) var<storage, read> entity_ids: array<u32>;
+@group(2) @binding(0) var<storage, read> models:           array<mat4x4<f32>>;
+@group(2) @binding(1) var<storage, read> material_indices: array<u32>;
+@group(2) @binding(2) var<storage, read> entity_ids:       array<u32>;
 
 @group(3) @binding(0) var irradiance_map:  texture_cube<f32>;
 @group(3) @binding(1) var prefiltered_env: texture_cube<f32>;
@@ -314,7 +315,7 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32)
     out.uv = input.uv.xy;
     out.color = input.color;
     out.entity_id = entity_ids[instance_index];
-    out.material_index = instance_index;
+    out.material_index = material_indices[instance_index];
     return out;
 }
 

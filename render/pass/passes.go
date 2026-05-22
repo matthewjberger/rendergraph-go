@@ -28,8 +28,8 @@ func AddSkyPass(renderer *render.Renderer) (*render.Pass, error) {
 // arrays is the engine-world's [asset.MaterialTextureArrays] (PBR
 // texture source); ibl is the [IBL] bundle the fragment shader
 // samples for ambient diffuse + specular.
-func AddMeshPass(renderer *render.Renderer, arrays *asset.MaterialTextureArrays, ibl *IBL) (*render.Pass, error) {
-	pass, err := NewMeshPass(renderer.Device, render.HdrFormat, renderer.AspectRatio, arrays, ibl)
+func AddMeshPass(renderer *render.Renderer, arrays *asset.MaterialTextureArrays, registry *asset.MaterialRegistry, ibl *IBL) (*render.Pass, error) {
+	pass, err := NewMeshPass(renderer.Device, render.HdrFormat, renderer.AspectRatio, arrays, registry, ibl)
 	if err != nil {
 		return nil, err
 	}
