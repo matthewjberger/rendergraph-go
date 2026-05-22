@@ -393,6 +393,7 @@ func spotShadowExecute(s any, context *render.PassContext) error {
 		return nil
 	}
 	assets := ecs.MustResource[asset.MeshAssetsResource](context.World).Assets
+	lightMask := ecs.MustMaskOf[render.Light](context.World)
 
 	for index := uint32(0); index < shadow.ActiveCount; index++ {
 		slotX := (index % SpotShadowSlotsPerRow) * SpotShadowSlotSize
@@ -430,12 +431,32 @@ func spotShadowExecute(s any, context *render.PassContext) error {
 			}
 			passEnc.SetBindGroup(1, shadowBg, nil)
 			passEnc.SetVertexBuffer(0, entry.Vertices, 0, wgpu.WholeSize)
-			passEnc.Draw(entry.VertexCount, uint32(len(bucket.slotEntity)), 0, 0)
+			drawNonLightInstances(passEnc, bucket, entry.VertexCount, lightMask, context.World)
 		}
 		passEnc.End()
 		passEnc.Release()
 	}
 	return nil
+}
+
+// drawNonLightInstances issues per-instance draws over a bucket,
+// skipping any instance whose ECS entity has a Light component.
+// Without this, the spotlight's own orb mesh (sitting at the
+// shadow camera's near plane) projects as a giant occluder and
+// shadows everything below the light.
+func drawNonLightInstances(passEnc *wgpu.RenderPassEncoder, bucket *handleInstances, vertexCount uint32, lightMask ecs.Mask, world *ecs.World) {
+	start := uint32(0)
+	for slot, entity := range bucket.slotEntity {
+		if world.HasComponents(entity, lightMask) {
+			if uint32(slot) > start {
+				passEnc.Draw(vertexCount, uint32(slot)-start, 0, start)
+			}
+			start = uint32(slot) + 1
+		}
+	}
+	if uint32(len(bucket.slotEntity)) > start {
+		passEnc.Draw(vertexCount, uint32(len(bucket.slotEntity))-start, 0, start)
+	}
 }
 
 func spotShadowRelease(s any) {
