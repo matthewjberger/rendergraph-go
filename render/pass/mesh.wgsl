@@ -249,7 +249,7 @@ fn fresnel_schlick_roughness(cos_theta: f32, f0: vec3<f32>, roughness: f32) -> v
 // Returns 1.0 (fully lit) when outside the shadow map's coverage
 // so geometry beyond the shadow frustum doesn't darken.
 fn sample_directional_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
-    let bias_offset = world_normal * 0.15;
+    let bias_offset = world_normal * 0.05;
     let shadow_clip = light_view_proj * vec4<f32>(world_pos + bias_offset, 1.0);
     let shadow_ndc = shadow_clip.xyz / shadow_clip.w;
     let shadow_uv = vec2<f32>(shadow_ndc.x * 0.5 + 0.5, -shadow_ndc.y * 0.5 + 0.5);
@@ -259,9 +259,9 @@ fn sample_directional_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f
     if (shadow_ndc.z < 0.0 || shadow_ndc.z > 1.0) {
         return 1.0;
     }
-    let bias: f32 = 0.005;
+    let bias: f32 = 0.0005;
     let depth = shadow_ndc.z - bias;
-    let texel = 1.0 / 2048.0;
+    let texel = 1.0 / 4096.0;
     var sum: f32 = 0.0;
     for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
         for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {

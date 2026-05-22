@@ -21,7 +21,7 @@ var shadowDepthShader string
 
 // ShadowMapSize is the side length of the directional shadow map.
 // 2048 trades VRAM for sharper edges at typical scene distances.
-const ShadowMapSize uint32 = 2048
+const ShadowMapSize uint32 = 4096
 
 // ShadowMapFormat is depth32float to match the engine's main depth.
 const ShadowMapFormat = wgpu.TextureFormatDepth32Float
@@ -340,17 +340,9 @@ func shadowDepthPrepare(s any, context *render.PassContext) error {
 	maxX += pad
 	minY -= pad
 	maxY += pad
-	zMult := float32(10.0)
-	if minZ < 0 {
-		minZ *= zMult
-	} else {
-		minZ /= zMult
-	}
-	if maxZ < 0 {
-		maxZ /= zMult
-	} else {
-		maxZ *= zMult
-	}
+	zPad := float32(50.0)
+	minZ -= zPad
+	maxZ += zPad
 	lightProj := orthoZO(minX, maxX, minY, maxY, -maxZ, -minZ)
 	lightVP := lightProj.Mul4(lightView)
 
@@ -519,8 +511,8 @@ func cameraFrustumCornersWorld(camera *render.Camera, hasCamera bool, aspect flo
 	fov := camera.FovYRadians
 	near := camera.Near
 	far := camera.Far
-	if far > near+100.0 {
-		far = near + 100.0
+	if far > near+40.0 {
+		far = near + 40.0
 	}
 	tanHalf := float32(math.Tan(float64(fov) * 0.5))
 	nearHeight := near * tanHalf
