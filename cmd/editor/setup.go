@@ -135,6 +135,7 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 	worlds.EngineSchedule.Push("graphics_toggles", render.UpdateGraphicsToggles)
 	worlds.EngineSchedule.Push("gizmos", pass.UpdateGizmos)
 	worlds.EngineSchedule.Push("pan_orbit_camera", render.UpdatePanOrbitCamera)
+	worlds.EngineSchedule.Push("animations", asset.UpdateAnimationPlayers)
 	worlds.EngineSchedule.Push("transform_propagation", transform.UpdateGlobalTransforms)
 	worlds.EngineSchedule.Push("bounding_volume_lines", pass.UpdateBoundingVolumeLines)
 	_ = advanceSpinners

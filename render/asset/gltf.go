@@ -274,6 +274,21 @@ func SpawnLoadedScene(world *ecs.World, scene *LoadedScene) []ecs.Entity {
 			ecs.Set(world, child, prim.Material)
 		}
 	}
+
+	// Auto-attach an AnimationPlayer to the first scene root when
+	// the source glTF carries clips. The player owns a copy of the
+	// clips plus the per-load node-index-to-entity map so per-frame
+	// channel sampling can resolve target nodes in O(1).
+	if len(scene.Animations) > 0 && len(scene.Roots) > 0 {
+		nodeIndexToEntity := make(map[int]ecs.Entity, len(entities))
+		for i, e := range entities {
+			nodeIndexToEntity[i] = e
+		}
+		root := entities[scene.Roots[0]]
+		playerMask := ecs.MustMaskOf[AnimationPlayer](world)
+		world.AddComponents(root, playerMask)
+		ecs.Set(world, root, NewAnimationPlayer(scene.Animations, nodeIndexToEntity))
+	}
 	return entities
 }
 

@@ -56,6 +56,7 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 	ecs.SetResource(worlds.Game, GameState{Lives: startingLives})
 
 	worlds.EngineSchedule.Push("graphics_toggles", render.UpdateGraphicsToggles)
+	worlds.EngineSchedule.Push("animations", asset.UpdateAnimationPlayers)
 	worlds.EngineSchedule.Push("transform_propagation", transform.UpdateGlobalTransforms)
 
 	worlds.GameSchedule.Push("input", breakoutInputSystem)
