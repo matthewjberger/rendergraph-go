@@ -115,7 +115,7 @@ func spawnBreakoutSun(engine *ecs.World) {
 	ecs.Set(engine, sun, render.Light{
 		Type:      render.LightTypeDirectional,
 		Color:     transform.Vec3{1.0, 0.98, 0.9},
-		Intensity: 1.6,
+		Intensity: 6.0,
 	})
 }
 
