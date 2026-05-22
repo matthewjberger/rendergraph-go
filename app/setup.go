@@ -33,6 +33,7 @@ func NewEngineWorld(renderer *render.Renderer) (*ecs.World, error) {
 	ecs.Register[transform.GlobalTransform](engine)
 	ecs.Register[transform.Parent](engine)
 	ecs.Register[transform.LocalTransformDirty](engine)
+	ecs.Register[transform.IgnoreParentScale](engine)
 	ecs.Register[asset.RenderMesh](engine)
 	ecs.Register[asset.Material](engine)
 	ecs.Register[render.Light](engine)
@@ -65,7 +66,7 @@ func NewEngineWorld(renderer *render.Renderer) (*ecs.World, error) {
 	ecs.SetResource(engine, primitives)
 	ecs.SetResource(engine, render.NewInput())
 	ecs.SetResource(engine, render.DefaultGraphicsSettings())
-	ecs.SetResource(engine, transform.NewPropagationState())
+	ecs.SetResource(engine, transform.NewTransformState())
 	return engine, nil
 }
 

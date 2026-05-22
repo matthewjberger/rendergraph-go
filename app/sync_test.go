@@ -15,7 +15,8 @@ func newEngineGame(t *testing.T) (*ecs.World, *ecs.World) {
 	ecs.Register[transform.GlobalTransform](engine)
 	ecs.Register[transform.Parent](engine)
 	ecs.Register[transform.LocalTransformDirty](engine)
-	ecs.SetResource(engine, transform.NewPropagationState())
+	ecs.Register[transform.IgnoreParentScale](engine)
+	ecs.SetResource(engine, transform.NewTransformState())
 
 	game := ecs.New()
 	ecs.Register[app.EngineEntity](game)

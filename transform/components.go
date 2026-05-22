@@ -1,21 +1,18 @@
-// Package transform is the data-oriented port of nightshade's
-// transform subsystem: components for positioning entities, a parent
-// relationship that links into the ECS, and a propagation system that
-// produces world-space matrices for the renderer.
+// Package transform owns the engine's transform hierarchy: the
+// LocalTransform / GlobalTransform / Parent components plus the
+// propagation system that turns local positions in a parent chain
+// into world-space matrices for the renderer.
 //
-// The transform package is independent of the renderer; the mesh pass
-// reads [GlobalTransform] values out of the ECS world the same way any
-// other system does.
+// The transform package is independent of the renderer; render passes
+// read GlobalTransform out of the ECS world the same way any other
+// system does.
 package transform
 
 import "indigo/ecs"
 
 // LocalTransform is position, rotation, and scale relative to the
-// parent entity (or world origin if the entity has no [Parent]).
-//
-// The matrix derived from this is TRS order (Translation × Rotation ×
-// Scale). Mirrors nightshade's LocalTransform component, identical
-// semantics.
+// parent entity (or world origin if the entity has no Parent).
+// AsMatrix builds the resulting matrix in T*R*S order.
 type LocalTransform struct {
 	Translation Vec3
 	Rotation    Quat
@@ -42,9 +39,7 @@ func FromTranslation(translation Vec3) LocalTransform {
 	}
 }
 
-// AsMatrix builds the 4x4 matrix for this transform in TRS order.
-// Free function (not a method on a value type) keeps the API
-// data-oriented: state in, matrix out.
+// AsMatrix builds the 4x4 matrix for this transform in T*R*S order.
 func AsMatrix(t *LocalTransform) Mat4 {
 	matrix := QuatToMat4(QuatNormalize(t.Rotation))
 
@@ -68,7 +63,8 @@ func AsMatrix(t *LocalTransform) Mat4 {
 }
 
 // GlobalTransform is the world-space matrix the renderer reads.
-// Maintained by [UpdateGlobalTransforms]; never set directly.
+// Maintained by [UpdateGlobalTransforms]; never set directly outside
+// the propagation system.
 type GlobalTransform struct {
 	Matrix Mat4
 }
@@ -84,29 +80,23 @@ func IdentityGlobalTransform() GlobalTransform {
 	return GlobalTransform{Matrix: Mat4Identity()}
 }
 
-// Parent links a child entity to its parent. nightshade uses
-// `Parent(Option<Entity>)`; Go has no Option, so we keep a separate
-// IsRoot flag. An entity with IsRoot=true (or no Parent component at
-// all) is a root.
+// Parent links a child entity to its parent. An entity with
+// IsRoot=true (or no Parent component at all) is a root. Set Parent
+// through [UpdateParent] rather than writing it directly so the
+// children cache invalidates correctly.
 type Parent struct {
 	Entity ecs.Entity
 	IsRoot bool
 }
 
-// LocalTransformDirty is the marker component the transform system
+// LocalTransformDirty is the marker component the propagation system
 // uses to find entities whose [GlobalTransform] needs recomputing.
-// Mirrors nightshade's LOCAL_TRANSFORM_DIRTY flag.
+// [MarkDirty] sets it and cascades it through descendants via the
+// children cache.
 type LocalTransformDirty struct{}
 
-// MarkDirty adds [LocalTransformDirty] to an entity if it is not
-// already marked. Use this from any system that mutates a
-// [LocalTransform] or changes a [Parent] link.
-//
-// The Has-then-Add check is intentional: adding a component triggers
-// an archetype migration, so we want to skip it when the entity is
-// already in the dirty archetype.
-func MarkDirty(world *ecs.World, entity ecs.Entity) {
-	if !ecs.Has[LocalTransformDirty](world, entity) {
-		ecs.Add[LocalTransformDirty](world, entity)
-	}
-}
+// IgnoreParentScale on a child strips the parent's scale out of the
+// world matrix composition. Use it for UI overlays, sprites, or
+// world-aligned markers that need to keep their own scale regardless
+// of what the parent does.
+type IgnoreParentScale struct{}
