@@ -1,6 +1,6 @@
 module indigo
 
-go 1.23
+go 1.25.0
 
 require (
 	github.com/cogentcore/webgpu v0.23.0
@@ -9,3 +9,5 @@ require (
 )
 
 require github.com/qmuntal/gltf v0.28.0
+
+require golang.org/x/image v0.41.0 // indirect

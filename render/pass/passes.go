@@ -4,6 +4,7 @@ import (
 	"github.com/cogentcore/webgpu/wgpu"
 
 	"indigo/render"
+	"indigo/render/asset"
 )
 
 // AddSkyPass builds the standard sky pass and registers it with the
@@ -24,8 +25,10 @@ func AddSkyPass(renderer *render.Renderer) (*render.Pass, error) {
 
 // AddMeshPass builds the standard mesh pass and registers it as a
 // writer of scene_color, depth, and the entity_id pick target.
-func AddMeshPass(renderer *render.Renderer) (*render.Pass, error) {
-	pass, err := NewMeshPass(renderer.Device, renderer.SurfaceFormat, renderer.AspectRatio)
+// arrays is the engine-world's [asset.MaterialTextureArrays],
+// bound by the pass as the global PBR texture source.
+func AddMeshPass(renderer *render.Renderer, arrays *asset.MaterialTextureArrays) (*render.Pass, error) {
+	pass, err := NewMeshPass(renderer.Device, renderer.SurfaceFormat, renderer.AspectRatio, arrays)
 	if err != nil {
 		return nil, err
 	}

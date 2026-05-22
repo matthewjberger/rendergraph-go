@@ -127,7 +127,8 @@ func spawnBreakoutSun(engine *ecs.World) {
 func breakoutApp() *app.App {
 	return &app.App{
 		ConfigureRenderGraph: func(world *ecs.World, renderer *render.Renderer) {
-			if _, err := pass.AddMeshPass(renderer); err != nil {
+			arrays := ecs.MustResource[asset.MaterialTextureArraysResource](world).Arrays
+			if _, err := pass.AddMeshPass(renderer, arrays); err != nil {
 				log.Fatal(err)
 			}
 			_, fxaaOutputID, err := pass.AddFxaaPass(renderer)

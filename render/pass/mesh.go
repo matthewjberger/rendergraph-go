@@ -19,47 +19,21 @@ import (
 var meshShader string
 
 // handleInstances owns the GPU and CPU bookkeeping for one mesh
-// handle in the mesh pass. Each handle gets its own storage buffer
-// and bind group so draws are flat `Draw(vertexCount, count, 0, 0)`
-// against contiguous instances.
-//
-// entityToSlot + slotEntity form a bidirectional map: an entity stays
-// at the same slot for its whole lifetime in this handle, so the
-// mesh pass can sparse-update the GPU buffer at known offsets.
+// handle in the mesh pass. Each handle holds three storage buffers
+// indexed by per-instance slot: world matrices, MaterialGPU
+// entries, and entity IDs. The same slot stays with an entity for
+// its whole lifetime so sparse uploads can write to known offsets.
 type handleInstances struct {
 	modelBuffer    *wgpu.Buffer
 	materialBuffer *wgpu.Buffer
 	entityIdBuffer *wgpu.Buffer
 	bindGroup      *wgpu.BindGroup
-	textureView    *wgpu.TextureView
-	textureSampler *wgpu.Sampler
 	capacity       uint32
 
 	entityToSlot map[ecs.Entity]uint32
 	slotEntity   []ecs.Entity
 }
 
-// textureBindings returns the texture view + sampler the mesh pass
-// should bind for a given mesh handle. If the handle has a texture
-// attached, return its view/sampler; otherwise return the cache's
-// default 1x1 white so the shader's textureSample call still has a
-// valid binding (returning vec4(1.0)).
-func textureBindings(context *render.PassContext, handle asset.MeshHandle) (*wgpu.TextureView, *wgpu.Sampler) {
-	cache := ecs.MustResource[asset.TextureCacheResource](context.World).Cache
-	assets := ecs.MustResource[asset.MeshAssetsResource](context.World).Assets
-	target := cache.White()
-	if entry, ok := assets.Lookup(handle); ok && entry.Texture != 0 {
-		target = entry.Texture
-	}
-	tex, ok := cache.Lookup(target)
-	if !ok {
-		return nil, nil
-	}
-	return tex.View, tex.Sampler
-}
-
-// releaseHandleInstances drops the bucket's GPU buffers and bind
-// group. Companion to [ensureHandleCapacity], free-function style.
 func releaseHandleInstances(h *handleInstances) {
 	if h.bindGroup != nil {
 		h.bindGroup.Release()
@@ -79,24 +53,26 @@ func releaseHandleInstances(h *handleInstances) {
 	}
 }
 
-// meshPassState is the long-lived state the mesh pass keeps. Every
-// scratch slice is here and reset between frames.
+// meshPassState is the long-lived state the mesh pass keeps.
 //
-// entityHandle is a top-level reverse index from entity to the
-// asset.MeshHandle whose slot table holds it. Despawn events arrive carrying
-// only an Entity; this map turns that into O(1) lookup to the right
-// bucket so the dead-entity sweep is O(despawned), not O(slots).
+//   - viewProjBindGroup (group 0): view × projection uniform.
+//   - globalBindGroup   (group 1): lights uniform + sRGB / linear
+//     texture array views + the shared sampler. Built once at pass
+//     setup; the texture array contents change via WriteTexture but
+//     the views stay valid.
+//   - per-handle bind group (group 2): models / materials /
+//     entity_ids storage buffers for that handle's instances.
 type meshPassState struct {
 	pipeline       *wgpu.RenderPipeline
-	modelBgLayout  *wgpu.BindGroupLayout
 	viewProjLayout *wgpu.BindGroupLayout
-	lightsBgLayout *wgpu.BindGroupLayout
+	globalBgLayout *wgpu.BindGroupLayout
+	handleBgLayout *wgpu.BindGroupLayout
 
 	viewProjBuffer    *wgpu.Buffer
 	viewProjBindGroup *wgpu.BindGroup
 
 	lightsBuffer    *wgpu.Buffer
-	lightsBindGroup *wgpu.BindGroup
+	globalBindGroup *wgpu.BindGroup
 
 	perHandle     map[asset.MeshHandle]*handleInstances
 	entityHandle  map[ecs.Entity]asset.MeshHandle
@@ -106,8 +82,8 @@ type meshPassState struct {
 }
 
 // lightDataUniform mirrors the WGSL LightData struct (48 bytes,
-// vec3 alignment leaves f32 scalars to pack into the trailing
-// 4 bytes of each vec3 slot).
+// vec3 alignment with f32 scalars packing into the trailing 4
+// bytes of each vec3 slot).
 type lightDataUniform struct {
 	Position  [3]float32
 	LightType uint32
@@ -118,8 +94,8 @@ type lightDataUniform struct {
 }
 
 // lightsUniform mirrors the WGSL Lights struct: u32 count plus 12
-// bytes of padding to land the array at a 16-byte boundary, followed
-// by render.MaxLights LightData entries.
+// bytes of padding to land the array at a 16-byte boundary, then
+// render.MaxLights LightData entries.
 type lightsUniform struct {
 	Count uint32
 	Pad0  uint32
@@ -128,23 +104,16 @@ type lightsUniform struct {
 	Data  [render.MaxLights]lightDataUniform
 }
 
-// materialDataUniform is the WGSL-aligned material entry layout the
-// mesh pass packs into per-handle storage buffers. Kept narrow until
-// the mesh shader actually consumes the extra PBR fields.
-type materialDataUniform struct {
-	BaseColor [4]float32
-}
-
-const materialDataSize = uint64(16)
-
-// NewMeshPass builds the engine's instanced mesh pass.
+// NewMeshPass builds the engine's instanced PBR mesh pass.
 //
-// View × projection lives in a small uniform updated every frame; per-
-// entity model matrices live in per-handle storage buffers, sparse-
-// updated via [ecs.IterChanged] on [transform.GlobalTransform]. Each
-// entity gets a stable slot in its handle's buffer so the GPU side
-// only writes the matrices that changed this frame.
-func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect func() float32) (*render.Pass, error) {
+// View × projection lives in a small uniform updated every frame;
+// per-entity model matrices, materials, and entity IDs live in
+// per-handle storage buffers, sparse-updated via [ecs.IterChanged]
+// on the respective components. Each entity gets a stable slot in
+// its handle's buffers so the GPU side only writes the entries
+// that changed this frame. Materials are sampled from the global
+// [asset.MaterialTextureArrays] resource, bound once at pass setup.
+func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect func() float32, arrays *asset.MaterialTextureArrays) (*render.Pass, error) {
 	state := &meshPassState{
 		perHandle:    make(map[asset.MeshHandle]*handleInstances, 4),
 		entityHandle: make(map[ecs.Entity]asset.MeshHandle, 64),
@@ -164,7 +133,43 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 	}
 	state.viewProjLayout = viewProjLayout
 
-	modelBgLayout, err := device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+	globalBgLayout, err := device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+		Label: "mesh global bind group layout",
+		Entries: []wgpu.BindGroupLayoutEntry{
+			{
+				Binding:    0,
+				Visibility: wgpu.ShaderStageFragment,
+				Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeUniform},
+			},
+			{
+				Binding:    1,
+				Visibility: wgpu.ShaderStageFragment,
+				Texture: wgpu.TextureBindingLayout{
+					SampleType:    wgpu.TextureSampleTypeFloat,
+					ViewDimension: wgpu.TextureViewDimension2DArray,
+				},
+			},
+			{
+				Binding:    2,
+				Visibility: wgpu.ShaderStageFragment,
+				Texture: wgpu.TextureBindingLayout{
+					SampleType:    wgpu.TextureSampleTypeFloat,
+					ViewDimension: wgpu.TextureViewDimension2DArray,
+				},
+			},
+			{
+				Binding:    3,
+				Visibility: wgpu.ShaderStageFragment,
+				Sampler:    wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering},
+			},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mesh pass: global bind group layout: %w", err)
+	}
+	state.globalBgLayout = globalBgLayout
+
+	handleBgLayout, err := device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
 		Label: "mesh per-handle bind group layout",
 		Entries: []wgpu.BindGroupLayoutEntry{
 			{
@@ -182,38 +187,12 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 				Visibility: wgpu.ShaderStageVertex,
 				Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage},
 			},
-			{
-				Binding:    3,
-				Visibility: wgpu.ShaderStageFragment,
-				Texture: wgpu.TextureBindingLayout{
-					SampleType:    wgpu.TextureSampleTypeFloat,
-					ViewDimension: wgpu.TextureViewDimension2D,
-				},
-			},
-			{
-				Binding:    4,
-				Visibility: wgpu.ShaderStageFragment,
-				Sampler:    wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering},
-			},
 		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("mesh pass: per-handle bind group layout: %w", err)
 	}
-	state.modelBgLayout = modelBgLayout
-
-	lightsBgLayout, err := device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
-		Label: "mesh lights bind group layout",
-		Entries: []wgpu.BindGroupLayoutEntry{{
-			Binding:    0,
-			Visibility: wgpu.ShaderStageFragment,
-			Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeUniform},
-		}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("mesh pass: lights bind group layout: %w", err)
-	}
-	state.lightsBgLayout = lightsBgLayout
+	state.handleBgLayout = handleBgLayout
 
 	viewProjBuffer, err := device.CreateBuffer(&wgpu.BufferDescriptor{
 		Label: "mesh view_proj buffer",
@@ -250,20 +229,20 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 	}
 	state.lightsBuffer = lightsBuffer
 
-	lightsBindGroup, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-		Label:  "mesh lights bind group",
-		Layout: lightsBgLayout,
-		Entries: []wgpu.BindGroupEntry{{
-			Binding: 0,
-			Buffer:  lightsBuffer,
-			Offset:  0,
-			Size:    uint64(unsafe.Sizeof(lightsUniform{})),
-		}},
+	globalBindGroup, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Label:  "mesh global bind group",
+		Layout: globalBgLayout,
+		Entries: []wgpu.BindGroupEntry{
+			{Binding: 0, Buffer: lightsBuffer, Offset: 0, Size: uint64(unsafe.Sizeof(lightsUniform{}))},
+			{Binding: 1, TextureView: arrays.SRGBView},
+			{Binding: 2, TextureView: arrays.LinearView},
+			{Binding: 3, Sampler: arrays.Sampler},
+		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("mesh pass: lights bind group: %w", err)
+		return nil, fmt.Errorf("mesh pass: global bind group: %w", err)
 	}
-	state.lightsBindGroup = lightsBindGroup
+	state.globalBindGroup = globalBindGroup
 
 	shader, err := device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
 		Label:          "mesh shader",
@@ -276,7 +255,7 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 
 	pipelineLayout, err := device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
 		Label:            "mesh pipeline layout",
-		BindGroupLayouts: []*wgpu.BindGroupLayout{viewProjLayout, modelBgLayout, lightsBgLayout},
+		BindGroupLayouts: []*wgpu.BindGroupLayout{viewProjLayout, globalBgLayout, handleBgLayout},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("mesh pass: pipeline layout: %w", err)
@@ -359,18 +338,11 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 }
 
 // meshPrepare runs every frame:
-//  1. Write the camera's view × projection into the uniform.
-//  2. Drain EntityDespawned events to free per-handle slots. The
-//     events are consumed (not just read) so a despawn cannot leak
-//     a slot if the mesh pass skips a frame for any reason.
-//  3. Allocate slots for entities whose asset.RenderMesh was stamped this
-//     tick: brand-new entities get fresh slots, and entities whose
-//     asset.RenderMesh.Mesh handle changed get released from their old
-//     bucket and re-slotted in the new one. Driven by
-//     [ecs.IterChanged1] over asset.RenderMesh so there is no per-frame
-//     scan over every visible entity.
-//  4. Sparse-upload only the entities whose GlobalTransform was
-//     stamped this tick.
+//  1. Write camera view × projection into the uniform.
+//  2. Drain EntityDespawned events to free per-handle slots.
+//  3. Allocate slots for entities whose RenderMesh changed.
+//  4. Sparse-upload only the entities whose GlobalTransform or
+//     Material was stamped this tick.
 //  5. Rebuild the sorted handle list so the draw order is stable.
 func meshPrepare(s any, context *render.PassContext) error {
 	state := s.(*meshPassState)
@@ -416,17 +388,16 @@ func meshPrepare(s any, context *render.PassContext) error {
 			bucket.entityToSlot[entity] = slot
 			bucket.slotEntity = append(bucket.slotEntity, entity)
 			state.entityHandle[entity] = handle
-			view, sampler := textureBindings(context, handle)
-			if err := ensureHandleCapacity(bucket, context.Device, state.modelBgLayout, view, sampler); err != nil {
+			if err := ensureHandleCapacity(bucket, context.Device, state.handleBgLayout); err != nil {
 				return
 			}
 			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.modelBuffer, uint64(slot)*matrixSize, bytesOf(&global.Matrix))
 
-			material := materialDataUniform{BaseColor: [4]float32{1, 1, 1, 1}}
+			material := asset.DefaultMaterial().ToGPU()
 			if mat, ok := ecs.Get[asset.Material](context.World, entity); ok {
-				material.BaseColor = mat.BaseColor
+				material = mat.ToGPU()
 			}
-			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.materialBuffer, uint64(slot)*materialDataSize, bytesOf(&material))
+			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.materialBuffer, uint64(slot)*asset.MaterialGPUSize, bytesOf(&material))
 
 			entityID := entity.ID
 			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.entityIdBuffer, uint64(slot)*4, bytesOf(&entityID))
@@ -471,8 +442,8 @@ func meshPrepare(s any, context *render.PassContext) error {
 			if !ok {
 				return
 			}
-			data := materialDataUniform{BaseColor: material.BaseColor}
-			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.materialBuffer, uint64(slot)*materialDataSize, bytesOf(&data))
+			data := material.ToGPU()
+			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.materialBuffer, uint64(slot)*asset.MaterialGPUSize, bytesOf(&data))
 		},
 	)
 
@@ -519,7 +490,7 @@ func meshExecute(s any, context *render.PassContext) error {
 	})
 	pass.SetPipeline(state.pipeline)
 	pass.SetBindGroup(0, state.viewProjBindGroup, nil)
-	pass.SetBindGroup(2, state.lightsBindGroup, nil)
+	pass.SetBindGroup(1, state.globalBindGroup, nil)
 
 	for _, handle := range state.sortedHandles {
 		bucket := state.perHandle[handle]
@@ -527,7 +498,7 @@ func meshExecute(s any, context *render.PassContext) error {
 		if !ok {
 			continue
 		}
-		pass.SetBindGroup(1, bucket.bindGroup, nil)
+		pass.SetBindGroup(2, bucket.bindGroup, nil)
 		pass.SetVertexBuffer(0, entry.Vertices, 0, wgpu.WholeSize)
 		pass.Draw(entry.VertexCount, uint32(len(bucket.slotEntity)), 0, 0)
 	}
@@ -542,8 +513,8 @@ func meshRelease(s any) {
 	for _, h := range state.perHandle {
 		releaseHandleInstances(h)
 	}
-	if state.lightsBindGroup != nil {
-		state.lightsBindGroup.Release()
+	if state.globalBindGroup != nil {
+		state.globalBindGroup.Release()
 	}
 	if state.lightsBuffer != nil {
 		state.lightsBuffer.Release()
@@ -554,11 +525,11 @@ func meshRelease(s any) {
 	if state.viewProjBuffer != nil {
 		state.viewProjBuffer.Release()
 	}
-	if state.lightsBgLayout != nil {
-		state.lightsBgLayout.Release()
+	if state.handleBgLayout != nil {
+		state.handleBgLayout.Release()
 	}
-	if state.modelBgLayout != nil {
-		state.modelBgLayout.Release()
+	if state.globalBgLayout != nil {
+		state.globalBgLayout.Release()
 	}
 	if state.viewProjLayout != nil {
 		state.viewProjLayout.Release()
@@ -568,11 +539,9 @@ func meshRelease(s any) {
 	}
 }
 
-// extractLights walks the engine world for entities with both a
-// [render.Light] and [transform.GlobalTransform] and packs them into the
-// uniform layout the mesh shader expects. The light's direction is
-// the negative third column of its GlobalTransform (the entity's
-// world-space -Z axis), matching nightshade's glTF convention.
+// extractLights walks the engine world for entities with both
+// [render.Light] and [transform.GlobalTransform] and packs them
+// into the uniform layout the mesh shader expects.
 func extractLights(world *ecs.World) lightsUniform {
 	out := lightsUniform{}
 	lightMask := ecs.MustMaskOf[render.Light](world)
@@ -598,11 +567,10 @@ func extractLights(world *ecs.World) lightsUniform {
 	return out
 }
 
-// releaseEntitySlot is the despawn-event handler. Looks up the
-// entity's handle via the top-level reverse index, swap-removes it
-// from that handle's slot table, and rewrites the moved tail entity's
-// GPU matrix at its new slot offset so subsequent draws don't read
-// stale data from the freed position.
+// releaseEntitySlot is the despawn handler: swap-remove the
+// entity's slot in its handle, then rewrite the moved tail
+// entity's data at its new slot so subsequent draws don't read
+// stale matrices / materials.
 func releaseEntitySlot(state *meshPassState, context *render.PassContext, entity ecs.Entity) {
 	handle, ok := state.entityHandle[entity]
 	if !ok {
@@ -625,11 +593,11 @@ func releaseEntitySlot(state *meshPassState, context *render.PassContext, entity
 		if global, ok := ecs.Get[transform.GlobalTransform](context.World, moved); ok {
 			writeBuffer(context.Device, context.Queue, context.Encoder, bucket.modelBuffer, uint64(slot)*matrixSize, bytesOf(&global.Matrix))
 		}
-		material := materialDataUniform{BaseColor: [4]float32{1, 1, 1, 1}}
+		material := asset.DefaultMaterial().ToGPU()
 		if mat, ok := ecs.Get[asset.Material](context.World, moved); ok {
-			material.BaseColor = mat.BaseColor
+			material = mat.ToGPU()
 		}
-		writeBuffer(context.Device, context.Queue, context.Encoder, bucket.materialBuffer, uint64(slot)*materialDataSize, bytesOf(&material))
+		writeBuffer(context.Device, context.Queue, context.Encoder, bucket.materialBuffer, uint64(slot)*asset.MaterialGPUSize, bytesOf(&material))
 
 		movedID := moved.ID
 		writeBuffer(context.Device, context.Queue, context.Encoder, bucket.entityIdBuffer, uint64(slot)*4, bytesOf(&movedID))
@@ -638,24 +606,23 @@ func releaseEntitySlot(state *meshPassState, context *render.PassContext, entity
 	delete(bucket.entityToSlot, entity)
 }
 
-// matrixSize is the byte size of a single mat4. Used for the GPU
-// offset arithmetic in sparse uploads.
+// matrixSize is the byte size of a single mat4. Used for offset
+// arithmetic in sparse uploads.
 const matrixSize uint64 = uint64(unsafe.Sizeof(mgl32.Mat4{}))
 
-// minHandleCapacity is the starting capacity for a handle's instance
-// buffer. The buffer doubles on growth.
+// minHandleCapacity is the starting capacity for a handle's
+// instance buffers. The buffers double on growth.
 const minHandleCapacity uint32 = 64
 
-// ensureHandleCapacity grows the handle's storage buffer (and rebuilds
-// its bind group) if the current slot count exceeded the buffer's
-// capacity. Existing matrix uploads are preserved — when the buffer
-// grows, the next frame's IterChanged pass refreshes every entity that
-// actually changed, and slots that didn't change need their content
-// reuploaded.
-func ensureHandleCapacity(h *handleInstances, device *wgpu.Device, layout *wgpu.BindGroupLayout, view *wgpu.TextureView, sampler *wgpu.Sampler) error {
+// ensureHandleCapacity grows the handle's three storage buffers
+// and rebuilds its bind group when the slot count exceeds the
+// current capacity. Existing contents aren't preserved on grow —
+// subsequent IterChanged passes refresh whatever changed this
+// frame and the slot-stable layout ensures other entries get
+// reuploaded next time their components stamp.
+func ensureHandleCapacity(h *handleInstances, device *wgpu.Device, layout *wgpu.BindGroupLayout) error {
 	required := uint32(len(h.slotEntity))
-	needRebind := h.textureView != view || h.textureSampler != sampler
-	if !needRebind && h.capacity >= required && h.modelBuffer != nil && h.materialBuffer != nil && h.entityIdBuffer != nil {
+	if h.capacity >= required && h.modelBuffer != nil && h.materialBuffer != nil && h.entityIdBuffer != nil {
 		return nil
 	}
 	newCapacity := h.capacity
@@ -679,7 +646,7 @@ func ensureHandleCapacity(h *handleInstances, device *wgpu.Device, layout *wgpu.
 	}
 	materialBuffer, err := device.CreateBuffer(&wgpu.BufferDescriptor{
 		Label: "mesh material buffer",
-		Size:  uint64(newCapacity) * materialDataSize,
+		Size:  uint64(newCapacity) * asset.MaterialGPUSize,
 		Usage: wgpu.BufferUsageStorage | wgpu.BufferUsageCopyDst,
 	})
 	if err != nil {
@@ -703,8 +670,6 @@ func ensureHandleCapacity(h *handleInstances, device *wgpu.Device, layout *wgpu.
 			{Binding: 0, Buffer: modelBuffer, Offset: 0, Size: wgpu.WholeSize},
 			{Binding: 1, Buffer: materialBuffer, Offset: 0, Size: wgpu.WholeSize},
 			{Binding: 2, Buffer: entityIdBuffer, Offset: 0, Size: wgpu.WholeSize},
-			{Binding: 3, TextureView: view},
-			{Binding: 4, Sampler: sampler},
 		},
 	})
 	if err != nil {
@@ -729,8 +694,6 @@ func ensureHandleCapacity(h *handleInstances, device *wgpu.Device, layout *wgpu.
 	h.materialBuffer = materialBuffer
 	h.entityIdBuffer = entityIdBuffer
 	h.bindGroup = bindGroup
-	h.textureView = view
-	h.textureSampler = sampler
 	h.capacity = newCapacity
 	return nil
 }

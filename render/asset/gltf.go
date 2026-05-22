@@ -19,6 +19,7 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/qmuntal/gltf"
 	"github.com/qmuntal/gltf/modeler"
+	xdraw "golang.org/x/image/draw"
 
 	"indigo/ecs"
 	"indigo/transform"
@@ -71,7 +72,7 @@ type LoadedMesh struct {
 // LoadGltfFile reads a glTF or glb file from disk and forwards to
 // [LoadGltfReader]. External-file image URIs are resolved relative
 // to the parent directory of path.
-func LoadGltfFile(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAssets, cache *TextureCache, path string) (*LoadedScene, error) {
+func LoadGltfFile(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAssets, arrays *MaterialTextureArrays, path string) (*LoadedScene, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("gltf %q: open: %w", path, err)
@@ -81,7 +82,7 @@ func LoadGltfFile(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAssets, ca
 		Label:   filepath.Base(path),
 		BaseDir: filepath.Dir(path),
 	}
-	return LoadGltfReaderOpts(device, queue, assets, cache, f, opts)
+	return LoadGltfReaderOpts(device, queue, assets, arrays, f, opts)
 }
 
 // LoadGltfOptions tweaks reader-side behavior. Label is the name
@@ -95,8 +96,8 @@ type LoadGltfOptions struct {
 
 // LoadGltfReader is the LoadGltfReaderOpts shortcut with default
 // options. Kept for callers that don't need a base dir.
-func LoadGltfReader(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAssets, cache *TextureCache, label string, r io.Reader) (*LoadedScene, error) {
-	return LoadGltfReaderOpts(device, queue, assets, cache, r, LoadGltfOptions{Label: label})
+func LoadGltfReader(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAssets, arrays *MaterialTextureArrays, label string, r io.Reader) (*LoadedScene, error) {
+	return LoadGltfReaderOpts(device, queue, assets, arrays, r, LoadGltfOptions{Label: label})
 }
 
 // LoadGltfReaderOpts parses a glTF / glb document from r, uploads
@@ -104,7 +105,7 @@ func LoadGltfReader(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAssets, 
 // captures animation data, and returns a LoadedScene that mirrors
 // the glTF node hierarchy. Caller can then [SpawnLoadedScene] to
 // materialize entities.
-func LoadGltfReaderOpts(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAssets, cache *TextureCache, r io.Reader, opts LoadGltfOptions) (*LoadedScene, error) {
+func LoadGltfReaderOpts(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAssets, arrays *MaterialTextureArrays, r io.Reader, opts LoadGltfOptions) (*LoadedScene, error) {
 	label := opts.Label
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -119,14 +120,14 @@ func LoadGltfReaderOpts(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAsse
 	scene := &LoadedScene{Label: label}
 
 	textureColorSpace := classifyTextures(doc)
-	textureIDs, err := uploadTextures(device, queue, cache, label, doc, textureColorSpace, opts.BaseDir)
+	textureLayers, err := uploadTextures(queue, arrays, label, doc, textureColorSpace, opts.BaseDir)
 	if err != nil {
 		return nil, err
 	}
 
 	materials := make([]Material, len(doc.Materials))
 	for i := range doc.Materials {
-		materials[i] = buildMaterial(doc.Materials[i], textureIDs)
+		materials[i] = buildMaterial(doc.Materials[i], textureLayers)
 	}
 	scene.Materials = materials
 
@@ -156,9 +157,6 @@ func LoadGltfReaderOpts(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAsse
 			material := DefaultMaterial()
 			if prim.Material != nil {
 				material = materials[*prim.Material]
-			}
-			if material.BaseColorTexture != 0 {
-				assets.AttachTexture(handle, material.BaseColorTexture)
 			}
 			results = append(results, primitiveResult{Handle: handle, Material: material})
 			scene.Meshes = append(scene.Meshes, LoadedMesh{Handle: handle, Name: name})
@@ -399,8 +397,16 @@ func classifyTextures(doc *gltf.Document) []TextureColorSpace {
 	return spaces
 }
 
-func uploadTextures(device *wgpu.Device, queue *wgpu.Queue, cache *TextureCache, label string, doc *gltf.Document, spaces []TextureColorSpace, baseDir string) ([]TextureID, error) {
-	out := make([]TextureID, len(doc.Textures))
+// uploadTextures decodes every glTF texture, resizes to the array
+// tile size, uploads it into the appropriate (sRGB or linear)
+// material texture array, and returns the packed layer + wrap-mode
+// value the mesh shader consumes. Index in the result matches the
+// glTF texture index.
+func uploadTextures(queue *wgpu.Queue, arrays *MaterialTextureArrays, label string, doc *gltf.Document, spaces []TextureColorSpace, baseDir string) ([]uint32, error) {
+	out := make([]uint32, len(doc.Textures))
+	for i := range out {
+		out[i] = NoTextureLayer
+	}
 	for i, tex := range doc.Textures {
 		if tex.Source == nil {
 			continue
@@ -410,65 +416,63 @@ func uploadTextures(device *wgpu.Device, queue *wgpu.Queue, cache *TextureCache,
 		if err != nil {
 			return nil, fmt.Errorf("gltf %q: image %d: %w", label, i, err)
 		}
+		resized := resizeRGBA(pixels, w, h, arrays.LayerSize, arrays.LayerSize)
 		name := fmt.Sprintf("%s/tex_%d", label, i)
 		if img.Name != "" {
 			name = label + "/" + img.Name
 		}
-		settings := samplerSettingsFor(doc, tex)
-		id, err := cache.Register(device, queue, name, w, h, pixels, spaces[i], settings)
+		layer, err := arrays.Upload(queue, name, spaces[i], resized)
 		if err != nil {
 			return nil, err
 		}
-		out[i] = id
+		wrapU, wrapV := samplerWrapModes(doc, tex)
+		out[i] = PackLayer(layer, wrapU, wrapV)
 	}
 	return out, nil
 }
 
-func samplerSettingsFor(doc *gltf.Document, tex *gltf.Texture) SamplerSettings {
-	s := DefaultSamplerSettings()
+// samplerWrapModes returns the per-axis wrap codes for a glTF
+// texture's sampler. Defaults to Repeat / Repeat when the texture
+// doesn't reference a sampler.
+func samplerWrapModes(doc *gltf.Document, tex *gltf.Texture) (WrapMode, WrapMode) {
 	if tex.Sampler == nil {
-		return s
+		return WrapRepeat, WrapRepeat
 	}
-	sampler := doc.Samplers[*tex.Sampler]
-	s.WrapU = mapWrap(sampler.WrapS)
-	s.WrapV = mapWrap(sampler.WrapT)
-	s.MagFilter = mapMagFilter(sampler.MagFilter)
-	s.MinFilter, s.MipmapFilter = mapMinFilter(sampler.MinFilter)
-	return s
+	s := doc.Samplers[*tex.Sampler]
+	return mapWrap(s.WrapS), mapWrap(s.WrapT)
 }
 
-func mapWrap(mode gltf.WrappingMode) wgpu.AddressMode {
+func mapWrap(mode gltf.WrappingMode) WrapMode {
 	switch mode {
 	case gltf.WrapClampToEdge:
-		return wgpu.AddressModeClampToEdge
+		return WrapClampToEdge
 	case gltf.WrapMirroredRepeat:
-		return wgpu.AddressModeMirrorRepeat
+		return WrapMirroredRepeat
 	default:
-		return wgpu.AddressModeRepeat
+		return WrapRepeat
 	}
 }
 
-func mapMagFilter(filter gltf.MagFilter) wgpu.FilterMode {
-	if filter == gltf.MagNearest {
-		return wgpu.FilterModeNearest
+// resizeRGBA bilinearly rescales tightly-packed RGBA8 pixels to
+// the target size. When the source already matches it returns the
+// input slice unchanged. The mesh texture arrays require all
+// layers to be the same size, so any non-matching glTF image gets
+// rescaled at load time.
+func resizeRGBA(src []byte, srcW, srcH, dstW, dstH uint32) []byte {
+	if srcW == dstW && srcH == dstH {
+		return src
 	}
-	return wgpu.FilterModeLinear
+	source := &image.RGBA{
+		Pix:    src,
+		Stride: int(srcW) * 4,
+		Rect:   image.Rect(0, 0, int(srcW), int(srcH)),
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, int(dstW), int(dstH)))
+	xdraw.BiLinear.Scale(dst, dst.Rect, source, source.Rect, xdraw.Src, nil)
+	return dst.Pix
 }
 
-func mapMinFilter(filter gltf.MinFilter) (wgpu.FilterMode, wgpu.MipmapFilterMode) {
-	switch filter {
-	case gltf.MinNearest, gltf.MinNearestMipMapNearest:
-		return wgpu.FilterModeNearest, wgpu.MipmapFilterModeNearest
-	case gltf.MinLinearMipMapNearest:
-		return wgpu.FilterModeLinear, wgpu.MipmapFilterModeNearest
-	case gltf.MinNearestMipMapLinear:
-		return wgpu.FilterModeNearest, wgpu.MipmapFilterModeLinear
-	default:
-		return wgpu.FilterModeLinear, wgpu.MipmapFilterModeLinear
-	}
-}
-
-func buildMaterial(src *gltf.Material, textureIDs []TextureID) Material {
+func buildMaterial(src *gltf.Material, textureLayers []uint32) Material {
 	out := DefaultMaterial()
 	if src == nil {
 		return out
@@ -480,26 +484,26 @@ func buildMaterial(src *gltf.Material, textureIDs []TextureID) Material {
 		out.MetallicFactor = float32(pbr.MetallicFactorOrDefault())
 		out.RoughnessFactor = float32(pbr.RoughnessFactorOrDefault())
 		if pbr.BaseColorTexture != nil {
-			out.BaseColorTexture = textureIDs[pbr.BaseColorTexture.Index]
+			out.BaseColorLayer = textureLayers[pbr.BaseColorTexture.Index]
 		}
 		if pbr.MetallicRoughnessTexture != nil {
-			out.MetallicRoughnessTexture = textureIDs[pbr.MetallicRoughnessTexture.Index]
+			out.MetallicRoughnessLayer = textureLayers[pbr.MetallicRoughnessTexture.Index]
 		}
 	}
 	if src.NormalTexture != nil {
 		if src.NormalTexture.Index != nil {
-			out.NormalTexture = textureIDs[*src.NormalTexture.Index]
+			out.NormalLayer = textureLayers[*src.NormalTexture.Index]
 		}
 		out.NormalScale = float32(src.NormalTexture.ScaleOrDefault())
 	}
 	if src.OcclusionTexture != nil {
 		if src.OcclusionTexture.Index != nil {
-			out.OcclusionTexture = textureIDs[*src.OcclusionTexture.Index]
+			out.OcclusionLayer = textureLayers[*src.OcclusionTexture.Index]
 		}
 		out.OcclusionStrength = float32(src.OcclusionTexture.StrengthOrDefault())
 	}
 	if src.EmissiveTexture != nil {
-		out.EmissiveTexture = textureIDs[src.EmissiveTexture.Index]
+		out.EmissiveLayer = textureLayers[src.EmissiveTexture.Index]
 	}
 	if src.EmissiveFactor != [3]float64{} {
 		out.EmissiveFactor = [3]float32{float32(src.EmissiveFactor[0]), float32(src.EmissiveFactor[1]), float32(src.EmissiveFactor[2])}

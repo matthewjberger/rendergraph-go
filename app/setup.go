@@ -52,6 +52,11 @@ func NewEngineWorld(renderer *render.Renderer) (*ecs.World, error) {
 		return nil, fmt.Errorf("app: register white texture: %w", err)
 	}
 
+	materialArrays, err := asset.NewMaterialTextureArrays(renderer.Device)
+	if err != nil {
+		return nil, fmt.Errorf("app: material texture arrays: %w", err)
+	}
+
 	lines := &pass.Lines{}
 
 	ecs.SetResource(engine, window.Window{
@@ -63,6 +68,7 @@ func NewEngineWorld(renderer *render.Renderer) (*ecs.World, error) {
 	ecs.SetResource(engine, render.RendererResource{Renderer: renderer})
 	ecs.SetResource(engine, asset.MeshAssetsResource{Assets: meshAssets})
 	ecs.SetResource(engine, asset.TextureCacheResource{Cache: textureCache})
+	ecs.SetResource(engine, asset.MaterialTextureArraysResource{Arrays: materialArrays})
 	ecs.SetResource(engine, pass.LinesResource{Lines: lines})
 	ecs.SetResource(engine, primitives)
 	ecs.SetResource(engine, render.NewInput())

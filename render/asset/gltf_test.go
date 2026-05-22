@@ -116,8 +116,8 @@ func TestBuildMaterialPBRFactorsAndFlags(t *testing.T) {
 	}
 }
 
-func TestBuildMaterialTextureIDLookup(t *testing.T) {
-	textureIDs := []TextureID{10, 20, 30}
+func TestBuildMaterialTextureLayerLookup(t *testing.T) {
+	textureLayers := []uint32{10, 20, 30}
 	scale := 1.5
 	strength := 0.8
 	src := &gltf.Material{
@@ -135,21 +135,21 @@ func TestBuildMaterialTextureIDLookup(t *testing.T) {
 		},
 		EmissiveTexture: &gltf.TextureInfo{Index: 1},
 	}
-	got := buildMaterial(src, textureIDs)
-	if got.BaseColorTexture != 10 {
-		t.Errorf("base color tex = %d", got.BaseColorTexture)
+	got := buildMaterial(src, textureLayers)
+	if got.BaseColorLayer != 10 {
+		t.Errorf("base color layer = %d", got.BaseColorLayer)
 	}
-	if got.MetallicRoughnessTexture != 20 {
-		t.Errorf("metallic roughness tex = %d", got.MetallicRoughnessTexture)
+	if got.MetallicRoughnessLayer != 20 {
+		t.Errorf("metallic roughness layer = %d", got.MetallicRoughnessLayer)
 	}
-	if got.NormalTexture != 30 || got.NormalScale != 1.5 {
-		t.Errorf("normal tex/scale = %d / %f", got.NormalTexture, got.NormalScale)
+	if got.NormalLayer != 30 || got.NormalScale != 1.5 {
+		t.Errorf("normal layer/scale = %d / %f", got.NormalLayer, got.NormalScale)
 	}
-	if got.OcclusionTexture != 10 || got.OcclusionStrength != 0.8 {
-		t.Errorf("occlusion tex/strength = %d / %f", got.OcclusionTexture, got.OcclusionStrength)
+	if got.OcclusionLayer != 10 || got.OcclusionStrength != 0.8 {
+		t.Errorf("occlusion layer/strength = %d / %f", got.OcclusionLayer, got.OcclusionStrength)
 	}
-	if got.EmissiveTexture != 20 {
-		t.Errorf("emissive tex = %d", got.EmissiveTexture)
+	if got.EmissiveLayer != 20 {
+		t.Errorf("emissive layer = %d", got.EmissiveLayer)
 	}
 }
 

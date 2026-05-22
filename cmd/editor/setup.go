@@ -184,8 +184,8 @@ func loadDefaultGltf(engine *ecs.World, renderer *render.Renderer) {
 // the editor's startup auto-load and the wasm drop callback.
 func loadGltfBytes(engine *ecs.World, renderer *render.Renderer, label string, data []byte) ([]ecs.Entity, error) {
 	assets := ecs.MustResource[asset.MeshAssetsResource](engine).Assets
-	cache := ecs.MustResource[asset.TextureCacheResource](engine).Cache
-	scene, err := asset.LoadGltfReader(renderer.Device, renderer.Queue, assets, cache, label, bytes.NewReader(data))
+	arrays := ecs.MustResource[asset.MaterialTextureArraysResource](engine).Arrays
+	scene, err := asset.LoadGltfReader(renderer.Device, renderer.Queue, assets, arrays, label, bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
@@ -197,8 +197,8 @@ func loadGltfBytes(engine *ecs.World, renderer *render.Renderer, label string, d
 // [loadGltfBytes] directly with bytes fetched from a drop event.
 func loadGltfInto(engine *ecs.World, renderer *render.Renderer, path string) ([]ecs.Entity, error) {
 	assets := ecs.MustResource[asset.MeshAssetsResource](engine).Assets
-	cache := ecs.MustResource[asset.TextureCacheResource](engine).Cache
-	scene, err := asset.LoadGltfFile(renderer.Device, renderer.Queue, assets, cache, path)
+	arrays := ecs.MustResource[asset.MaterialTextureArraysResource](engine).Arrays
+	scene, err := asset.LoadGltfFile(renderer.Device, renderer.Queue, assets, arrays, path)
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +234,8 @@ func editorApp() *app.App {
 			if _, err := pass.AddSkyPass(renderer); err != nil {
 				log.Fatal(err)
 			}
-			if _, err := pass.AddMeshPass(renderer); err != nil {
+			arrays := ecs.MustResource[asset.MaterialTextureArraysResource](world).Arrays
+			if _, err := pass.AddMeshPass(renderer, arrays); err != nil {
 				log.Fatal(err)
 			}
 			if _, err := pass.AddPickingPass(renderer); err != nil {
