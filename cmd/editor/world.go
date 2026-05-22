@@ -146,13 +146,13 @@ func spawnGroundPlane(worlds app.Worlds) {
 		ecs.MustMaskOf[app.Name](engine)
 	ground := engine.Spawn(groundMask)
 	local := transform.IdentityLocalTransform()
-	local.Translation = transform.Vec3{0, -0.5, 0}
+	local.Translation = transform.Vec3{0, -3.0, 0}
 	local.Rotation = transform.QuatFromAxisAngle(-float32(math.Pi/2), transform.Vec3{1, 0, 0})
-	local.Scale = transform.Vec3{40, 40, 1}
+	local.Scale = transform.Vec3{60, 60, 1}
 	ecs.Set(engine, ground, local)
 	ecs.Set(engine, ground, transform.IdentityGlobalTransform())
 	ecs.Set(engine, ground, asset.RenderMesh{Mesh: primitives.UnitQuad})
-	ecs.Set(engine, ground, asset.AlbedoMaterial([4]float32{0.55, 0.55, 0.58, 1.0}))
+	ecs.Set(engine, ground, asset.AlbedoMaterial([4]float32{0.5, 0.5, 0.5, 1.0}))
 	ecs.Set(engine, ground, app.Name{Value: "Ground"})
 }
 

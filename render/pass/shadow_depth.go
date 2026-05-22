@@ -270,8 +270,8 @@ func shadowDepthPrepare(s any, context *render.PassContext) error {
 		}
 	})
 
-	center := mgl32.Vec3{0, 0, 0}
-	radius := float32(20.0)
+	center := mgl32.Vec3{0, -1, 0}
+	radius := float32(30.0)
 	eye := center.Sub(lightDir.Mul(radius * 2.0))
 	up := mgl32.Vec3{0, 1, 0}
 	if mgl32.Abs(lightDir.Y()) > 0.99 {
