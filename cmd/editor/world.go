@@ -188,8 +188,8 @@ func spawnLightOrbs(worlds app.Worlds, orbMesh asset.MeshHandle) {
 		transform.Vec3{0, 2.5, 0},
 		scale,
 		transform.Vec3{1.0, 0.95, 0.3},
+		120.0,
 		20.0,
-		6.0,
 		float32(math.Pi/8),
 		float32(math.Pi/5),
 	)
