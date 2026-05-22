@@ -5,6 +5,8 @@
 package main
 
 import (
+	"bytes"
+	_ "embed"
 	"fmt"
 	"log"
 	"math"
@@ -152,7 +154,7 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 		[]asset.MeshHandle{primitives.UnitTriangle, primitives.UnitQuad, primitives.UnitCube},
 		[]string{"Triangle", "Quad", "Cube"},
 	)
-	loadDefaultGltf(engine, renderer, "assets/gltf/DamagedHelmet.glb")
+	loadDefaultGltf(engine, renderer)
 
 	if err := renderer.Graph.Compile(renderer.Device); err != nil {
 		log.Fatal(err)
@@ -160,16 +162,34 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 	return worlds, demo
 }
 
-// loadDefaultGltf imports a .glb / .gltf at editor startup so the
-// view isn't just primitives. Silently no-ops when the file is
-// missing so checkouts without the asset still launch.
-func loadDefaultGltf(engine *ecs.World, renderer *render.Renderer, path string) {
-	if _, err := os.Stat(path); err != nil {
-		return
-	}
-	if _, err := loadGltfInto(engine, renderer, path); err != nil {
+// defaultGltf is the .glb the editor auto-loads at startup so the
+// view isn't just primitives. Embedded so both the native build
+// and the wasm build see it without depending on a filesystem
+// path.
+//
+//go:embed assets/DamagedHelmet.glb
+var defaultGltf []byte
+
+// loadDefaultGltf spawns the embedded DamagedHelmet scene at
+// startup. Logs and continues on error rather than aborting boot
+// so a broken asset doesn't prevent the editor from launching.
+func loadDefaultGltf(engine *ecs.World, renderer *render.Renderer) {
+	if _, err := loadGltfBytes(engine, renderer, "DamagedHelmet.glb", defaultGltf); err != nil {
 		log.Printf("gltf load failed: %v", err)
 	}
+}
+
+// loadGltfBytes parses a glTF / glb buffer and spawns its scene
+// through the shared [spawnLoadedSceneNamed] helper. Used by both
+// the editor's startup auto-load and the wasm drop callback.
+func loadGltfBytes(engine *ecs.World, renderer *render.Renderer, label string, data []byte) ([]ecs.Entity, error) {
+	assets := ecs.MustResource[asset.MeshAssetsResource](engine).Assets
+	cache := ecs.MustResource[asset.TextureCacheResource](engine).Cache
+	scene, err := asset.LoadGltfReader(renderer.Device, renderer.Queue, assets, cache, label, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	return spawnLoadedSceneNamed(engine, scene, label)
 }
 
 // loadGltfInto loads path via [asset.LoadGltfFile] and forwards to

@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"log"
 	"path/filepath"
 	"strings"
@@ -16,26 +15,11 @@ import (
 	"indigo/app"
 	"indigo/ecs"
 	"indigo/render"
-	"indigo/render/asset"
 	"indigo/render/pass"
 	"indigo/transform"
 	"indigo/ui"
 	"indigo/window"
 )
-
-// loadGltfBytes parses a glTF / glb buffer (the bytes dropped on
-// the canvas via [installCanvasDropListener]) and routes through
-// the shared [spawnLoadedSceneNamed] helper so wasm drops produce
-// the same entity tree shape as the native filesystem path.
-func loadGltfBytes(engine *ecs.World, renderer *render.Renderer, label string, data []byte) ([]ecs.Entity, error) {
-	assets := ecs.MustResource[asset.MeshAssetsResource](engine).Assets
-	cache := ecs.MustResource[asset.TextureCacheResource](engine).Cache
-	scene, err := asset.LoadGltfReader(renderer.Device, renderer.Queue, assets, cache, label, bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	return spawnLoadedSceneNamed(engine, scene, label)
-}
 
 // pendingDrops is the queue the canvas drop callback writes into
 // after asynchronously reading dropped files. The frame loop drains
