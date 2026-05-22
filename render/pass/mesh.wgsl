@@ -269,7 +269,7 @@ fn sample_cascade(world_pos: vec3<f32>, world_normal: vec3<f32>, cascade: i32) -
     let cascade_extent = shadow_uniforms.cascade_splits[cascade] * 2.0;
     let texel_world = cascade_extent / 2048.0;
     let normal_offset = world_normal * texel_world * 1.5;
-    let depth_offset = direction_to_light * 0.008 * cascade_extent;
+    let depth_offset = direction_to_light * 0.05;
     let offset_pos = world_pos + normal_offset + depth_offset;
     let shadow_clip = shadow_uniforms.cascade_view_projections[cascade] * vec4<f32>(offset_pos, 1.0);
     let shadow_ndc = shadow_clip.xyz / shadow_clip.w;
