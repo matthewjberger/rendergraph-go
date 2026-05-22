@@ -128,7 +128,7 @@ fn safe_normalize(v: vec3<f32>) -> vec3<f32> {
 // sign for the bitangent (+1 or -1).
 //
 // flags is the per-material normal_map_flags bitfield: bit 0 =
-// FLIP_Y (negate the green channel — common for tools that
+// FLIP_Y (negate the green channel ;common for tools that
 // export -Y), bit 1 = TWO_COMPONENT (only XY stored, reconstruct
 // Z = sqrt(1 - x^2 - y^2)). Both bits are passed in as 0 today;
 // the helper takes the arg so the flag plumbing is in place for
@@ -364,7 +364,7 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
     let uv_ddy = dpdy(in.uv);
 
     // View direction in world space, recovered from the camera
-    // position uniform (NOT from -world_pos — that only worked
+    // position uniform (NOT from -world_pos ;that only worked
     // when the camera sat at the origin).
     let view_dir = normalize(cluster_uniforms.camera_position.xyz - in.world_pos);
 
@@ -441,7 +441,7 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
         return out_unlit;
     }
 
-    // Reuse the view_dir computed above for V — after the back-
+    // Reuse the view_dir computed above for V ;after the back-
     // face flip, geom_normal points toward view_dir, so V is
     // exactly normalize(camera_position - world_pos).
     let v = view_dir;

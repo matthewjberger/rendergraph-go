@@ -3,6 +3,7 @@ package pass
 import (
 	_ "embed"
 	"fmt"
+	"math"
 	"unsafe"
 
 	"github.com/cogentcore/webgpu/wgpu"
@@ -12,6 +13,7 @@ import (
 	"indigo/render"
 	"indigo/render/asset"
 	"indigo/transform"
+	"indigo/window"
 )
 
 //go:embed shadow_depth.wgsl
@@ -132,7 +134,7 @@ func (s *Shadow) Release() {
 // NewShadowDepthPass builds the depth-only render pass that draws
 // every RenderMesh entity into the shadow texture from the
 // directional sun's point of view. Mesh-pass per-handle bind
-// groups are reused — only the model storage buffer at binding 0
+// groups are reused; only the model storage buffer at binding 0
 // is read by the shadow shader (positions only, no materials).
 func NewShadowDepthPass(device *wgpu.Device, shadow *Shadow) (*render.Pass, error) {
 	state := &shadowDepthPassState{}
@@ -250,8 +252,9 @@ func NewShadowDepthPass(device *wgpu.Device, shadow *Shadow) (*render.Pass, erro
 }
 
 // shadowDepthPrepare computes the directional light's view +
-// orthographic projection from the first directional light in the
-// world and uploads it to the uniform buffer.
+// ortho projection. The frustum encloses the active camera's
+// visible frustum corners in light space so the shadow texture
+// is sized to what the camera sees.
 func shadowDepthPrepare(s any, context *render.PassContext) error {
 	_ = s
 
@@ -270,15 +273,85 @@ func shadowDepthPrepare(s any, context *render.PassContext) error {
 		}
 	})
 
-	center := mgl32.Vec3{0, -1, 0}
-	radius := float32(30.0)
-	eye := center.Sub(lightDir.Mul(radius * 2.0))
+	camera, ok := ecs.Resource[render.Camera](context.World)
+	aspect := float32(1.0)
+	if resource, hasViewport := ecs.Resource[window.Window](context.World); hasViewport {
+		if resource.Viewport.Height > 0 {
+			aspect = float32(resource.Viewport.Width) / float32(resource.Viewport.Height)
+		}
+	}
+	corners := cameraFrustumCornersWorld(camera, ok, aspect)
+	center := mgl32.Vec3{0, 0, 0}
+	for _, corner := range corners {
+		center = center.Add(corner)
+	}
+	center = center.Mul(1.0 / float32(len(corners)))
+	maxRadius := float32(0)
+	for _, corner := range corners {
+		d := corner.Sub(center).Len()
+		if d > maxRadius {
+			maxRadius = d
+		}
+	}
+	if maxRadius < 1.0 {
+		maxRadius = 30.0
+	}
+
 	up := mgl32.Vec3{0, 1, 0}
 	if mgl32.Abs(lightDir.Y()) > 0.99 {
 		up = mgl32.Vec3{1, 0, 0}
 	}
+	eye := center.Sub(lightDir.Mul(maxRadius * 4.0))
 	lightView := mgl32.LookAtV(eye, center, up)
-	lightProj := mgl32.Ortho(-radius, radius, -radius, radius, 0.1, radius*4.0)
+
+	minX := float32(math.MaxFloat32)
+	maxX := float32(-math.MaxFloat32)
+	minY := minX
+	maxY := maxX
+	minZ := minX
+	maxZ := maxX
+	for _, corner := range corners {
+		light4 := lightView.Mul4x1(mgl32.Vec4{corner.X(), corner.Y(), corner.Z(), 1.0})
+		if light4.X() < minX {
+			minX = light4.X()
+		}
+		if light4.X() > maxX {
+			maxX = light4.X()
+		}
+		if light4.Y() < minY {
+			minY = light4.Y()
+		}
+		if light4.Y() > maxY {
+			maxY = light4.Y()
+		}
+		if light4.Z() < minZ {
+			minZ = light4.Z()
+		}
+		if light4.Z() > maxZ {
+			maxZ = light4.Z()
+		}
+	}
+	pad := (maxX - minX)
+	if (maxY - minY) > pad {
+		pad = maxY - minY
+	}
+	pad *= 0.1
+	minX -= pad
+	maxX += pad
+	minY -= pad
+	maxY += pad
+	zMult := float32(10.0)
+	if minZ < 0 {
+		minZ *= zMult
+	} else {
+		minZ /= zMult
+	}
+	if maxZ < 0 {
+		maxZ /= zMult
+	} else {
+		maxZ *= zMult
+	}
+	lightProj := mgl32.Ortho(minX, maxX, minY, maxY, -maxZ, -minZ)
 	lightVP := lightProj.Mul4(lightView)
 
 	shadow := ecs.MustResource[ShadowResource](context.World).Shadow
@@ -405,4 +478,55 @@ func AddShadowDepthPass(renderer *render.Renderer, shadow *Shadow) (*render.Pass
 func findMeshPassState(_ *ecs.World) (*meshPassState, bool) {
 	state, ok := sharedMeshPassState.Load().(*meshPassState)
 	return state, ok && state != nil
+}
+
+// cameraFrustumCornersWorld returns the 8 world-space corners of
+// the camera's view frustum (near + far rect corners), or a
+// scene-centered fallback box when the camera resource is missing
+// or has zero extent. Used by the shadow pass to fit the
+// directional light's ortho projection around the visible scene.
+func cameraFrustumCornersWorld(camera *render.Camera, hasCamera bool, aspect float32) [8]mgl32.Vec3 {
+	if !hasCamera || camera == nil {
+		var fallback [8]mgl32.Vec3
+		extent := float32(30.0)
+		index := 0
+		for _, sx := range []float32{-1, 1} {
+			for _, sy := range []float32{-1, 1} {
+				for _, sz := range []float32{-1, 1} {
+					fallback[index] = mgl32.Vec3{sx * extent, sy * extent, sz * extent}
+					index++
+				}
+			}
+		}
+		return fallback
+	}
+	fov := camera.FovYRadians
+	near := camera.Near
+	far := camera.Far
+	if far > near+100.0 {
+		far = near + 100.0
+	}
+	tanHalf := float32(math.Tan(float64(fov) * 0.5))
+	nearHeight := near * tanHalf
+	nearWidth := nearHeight * aspect
+	farHeight := far * tanHalf
+	farWidth := farHeight * aspect
+	viewSpace := [8]mgl32.Vec3{
+		{-nearWidth, -nearHeight, -near},
+		{nearWidth, -nearHeight, -near},
+		{nearWidth, nearHeight, -near},
+		{-nearWidth, nearHeight, -near},
+		{-farWidth, -farHeight, -far},
+		{farWidth, -farHeight, -far},
+		{farWidth, farHeight, -far},
+		{-farWidth, farHeight, -far},
+	}
+	view := render.CameraView(camera)
+	inv := view.Inv()
+	var corners [8]mgl32.Vec3
+	for index, corner := range viewSpace {
+		world := inv.Mul4x1(mgl32.Vec4{corner.X(), corner.Y(), corner.Z(), 1.0})
+		corners[index] = mgl32.Vec3{world.X(), world.Y(), world.Z()}
+	}
+	return corners
 }
