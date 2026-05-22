@@ -150,18 +150,12 @@ func findEntityByID(engine *ecs.World, id uint32) (ecs.Entity, bool) {
 // RenderMesh and would be missed by ID-only [applySelection]).
 func applyEntitySelection(engine *ecs.World, entity ecs.Entity) {
 	clearSelection(engine)
-	if entity.ID == 0 {
-		return
-	}
 	ecs.Add[render.Selected](engine, entity)
 }
 
 // toggleSelection flips the Selected tag on entity without
 // touching other selections (multi-select via shift-click).
 func toggleSelection(engine *ecs.World, entity ecs.Entity) {
-	if entity.ID == 0 {
-		return
-	}
 	if ecs.Has[render.Selected](engine, entity) {
 		ecs.Remove[render.Selected](engine, entity)
 		return

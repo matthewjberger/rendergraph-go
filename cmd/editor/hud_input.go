@@ -142,8 +142,8 @@ func handleRightClick(worlds app.Worlds) {
 	}
 	hud := ecs.MustResource[HudHandles](worlds.Engine)
 	for i, row := range hud.TreeRows {
-		if row.ID == 0 {
-			continue
+		if i >= hud.TreeRowCount {
+			break
 		}
 		nodeRef, ok := ecs.Get[ui.Node](worlds.UI, row)
 		if !ok {
@@ -153,9 +153,6 @@ func handleRightClick(worlds app.Worlds) {
 			continue
 		}
 		target := hud.TreeRowToEngine[i]
-		if target.ID == 0 {
-			return
-		}
 		hud.ContextTarget = target
 		hud.OpenMenu = menuContextOpen
 		moveContextMenu(worlds.UI, hud.ContextMenu, pointer.X, pointer.Y)
@@ -205,9 +202,7 @@ func handleUiClicks(worlds app.Worlds) {
 			for i, row := range hud.TreeRows {
 				if evt.Entity == row {
 					target := hud.TreeRowToEngine[i]
-					if target.ID != 0 {
-						applyEntitySelection(worlds.Engine, target)
-					}
+					applyEntitySelection(worlds.Engine, target)
 					hud.OpenMenu = menuClosed
 					break
 				}
@@ -276,10 +271,7 @@ func handleMenuItem(worlds app.Worlds, hud *HudHandles, entity ecs.Entity) bool 
 	if idx := matchItem(hud.ContextMenu, entity); idx >= 0 {
 		switch idx {
 		case 0:
-			target := hud.ContextTarget
-			if target.ID != 0 {
-				worlds.Engine.Despawn(target)
-			}
+			worlds.Engine.Despawn(hud.ContextTarget)
 			hud.ContextTarget = ecs.Entity{}
 		}
 		return true

@@ -82,6 +82,7 @@ type HudHandles struct {
 	MaterialLabel    ecs.Entity
 
 	TreeRowToEngine [hudTreeRowCount]ecs.Entity
+	TreeRowCount    int
 
 	RequestExit     bool
 	NameFocusedPrev bool

@@ -173,11 +173,13 @@ func (c *HudContext) refreshEntityTree() {
 	}
 	offset := c.Hud.TreeScrollIndex
 
+	c.Hud.TreeRowCount = 0
 	for i := 0; i < hudTreeRowCount; i++ {
 		row := c.Hud.TreeRows[i]
 		idx := i + offset
 		if idx < len(entries) {
 			c.Hud.TreeRowToEngine[i] = entries[idx].Entity
+			c.Hud.TreeRowCount++
 			c.setText(row, entries[idx].Name)
 			if hasSelected && entries[idx].Entity == selected {
 				c.setColor(row, [4]float32{0.22, 0.5, 0.86, 1})
