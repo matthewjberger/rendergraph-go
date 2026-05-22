@@ -87,6 +87,22 @@ func (s *Schedule) Run(world *World) {
 	}
 }
 
+// SubSchedule wraps a child schedule as a single [SystemFn] that
+// can be pushed into a parent. Useful for composing subsystems
+// (retained-UI tree, animation, post-process pipeline) into a
+// single named slot in the outer frame schedule.
+//
+//	uiSchedule := ecs.NewSchedule()
+//	uiSchedule.Push("hud_layout", refreshLayout)
+//	uiSchedule.Push("hud_input", driveInputs)
+//	engineSchedule.Push("retained_ui", ecs.SubSchedule(uiSchedule))
+//
+// The parent never sees the child's individual systems — adding a
+// new one to the child doesn't touch the parent's ordering.
+func SubSchedule(child *Schedule) SystemFn {
+	return func(world *World) { child.Run(world) }
+}
+
 func (s *Schedule) indexOf(name string) int {
 	for i, candidate := range s.names {
 		if candidate == name {
