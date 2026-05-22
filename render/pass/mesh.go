@@ -78,7 +78,7 @@ type meshPassState struct {
 // code: bind-group layouts + buffers + pipeline live in
 // [mesh_layouts.go], per-handle bookkeeping in [mesh_handle.go],
 // per-frame work in [mesh_frame.go].
-func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect func() float32, arrays *asset.MaterialTextureArrays, registry *asset.MaterialRegistry, ibl *IBL, shadow *Shadow, spotShadow *SpotShadow) (*render.Pass, error) {
+func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect func() float32, arrays *asset.MaterialTextureArrays, registry *asset.MaterialRegistry, ibl *IBL, shadow *Shadow, spotShadow *SpotShadow, pointShadow *PointShadow) (*render.Pass, error) {
 	state := &meshPassState{
 		perHandle:    make(map[asset.MeshHandle]*handleInstances, 4),
 		entityHandle: make(map[ecs.Entity]asset.MeshHandle, 64),
@@ -133,7 +133,7 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 	}
 	state.clusters = clusters
 
-	globalBindGroup, err := createGlobalBindGroup(device, globalBgLayout, clusters, arrays, registry, shadow, shadow.UniformBuffer, spotShadow)
+	globalBindGroup, err := createGlobalBindGroup(device, globalBgLayout, clusters, arrays, registry, shadow, shadow.UniformBuffer, spotShadow, pointShadow)
 	if err != nil {
 		return nil, err
 	}

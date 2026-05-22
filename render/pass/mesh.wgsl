@@ -125,6 +125,27 @@ struct SpotShadowUniforms {
 @group(1) @binding(12) var<uniform> spot_shadow_uniforms: SpotShadowUniforms;
 @group(1) @binding(13) var spot_shadow_atlas: texture_depth_2d;
 
+struct PointShadowEntry {
+    position: vec3<f32>,
+    range: f32,
+    bias: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+};
+
+struct PointShadowUniforms {
+    entries: array<PointShadowEntry, 4>,
+    count: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+@group(1) @binding(14) var<uniform> point_shadow_uniforms: PointShadowUniforms;
+@group(1) @binding(15) var point_shadow_cube_array: texture_cube_array<f32>;
+@group(1) @binding(16) var point_shadow_sampler: sampler;
+
 @group(2) @binding(0) var<storage, read> models:           array<mat4x4<f32>>;
 @group(2) @binding(1) var<storage, read> material_indices: array<u32>;
 @group(2) @binding(2) var<storage, read> entity_ids:       array<u32>;
@@ -414,6 +435,34 @@ fn sample_spot_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>, shadow_inde
     return textureSampleCompareLevel(spot_shadow_atlas, shadow_sampler, atlas_uv, depth);
 }
 
+// sample_point_shadow looks up the omnidirectional shadow cube
+// face that contains the light->fragment direction. The cube
+// stores normalized distance (frag distance / light range) per
+// face, so we compare the fragment's normalized distance against
+// the sampled occluder distance with a small bias.
+fn sample_point_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>, shadow_index: i32) -> f32 {
+    if (shadow_index < 0 || u32(shadow_index) >= point_shadow_uniforms.count) {
+        return 1.0;
+    }
+    let entry = point_shadow_uniforms.entries[shadow_index];
+    let light_to_frag = world_pos - entry.position;
+    let distance = length(light_to_frag);
+    if (distance > entry.range) {
+        return 1.0;
+    }
+    let direction = normalize(light_to_frag);
+    let normalized = distance / entry.range;
+    let light_dir = -direction;
+    let slope = 1.0 - abs(dot(world_normal, light_dir));
+    let bias = entry.bias * (1.0 + slope * 2.0);
+    let reference = normalized - bias;
+    let sampled = textureSampleLevel(point_shadow_cube_array, point_shadow_sampler, direction, shadow_index, 0.0).r;
+    if (reference <= sampled) {
+        return 1.0;
+    }
+    return 0.0;
+}
+
 fn shade_one_light(light: Light, point_to_light: vec3<f32>, v: vec3<f32>, n: vec3<f32>, albedo: vec3<f32>, f0: vec3<f32>, metallic: f32, roughness: f32) -> vec3<f32> {
     let l = normalize(point_to_light);
     let h = normalize(v + l);
@@ -581,6 +630,9 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
         var contribution = shade_one_light(light, point_to_light, v, n, albedo, f0, metallic, roughness);
         if (light.light_type == LIGHT_TYPE_SPOT && light.shadow_index >= 0) {
             contribution = contribution * sample_spot_shadow(in.world_pos, n, light.shadow_index);
+        }
+        if (light.light_type == LIGHT_TYPE_POINT && light.shadow_index >= 0) {
+            contribution = contribution * sample_point_shadow(in.world_pos, n, light.shadow_index);
         }
         lo = lo + contribution;
     }

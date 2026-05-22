@@ -336,6 +336,14 @@ func extractLights(world *ecs.World, scratch []LightGPU) []LightGPU {
 			spotShadowEntities[index] = resource.Shadow.slotEntity(index)
 		}
 	}
+	var pointShadowEntities [MaxPointShadows]ecs.Entity
+	var pointShadowCount uint32
+	if resource, ok := ecs.Resource[PointShadowResource](world); ok && resource.Shadow != nil {
+		pointShadowCount = resource.Shadow.ActiveCount
+		for index := uint32(0); index < pointShadowCount; index++ {
+			pointShadowEntities[index] = resource.Shadow.slotEntity(index)
+		}
+	}
 	lightMask := ecs.MustMaskOf[render.Light](world)
 	globalMask := ecs.MustMaskOf[transform.GlobalTransform](world)
 	world.ForEach(lightMask|globalMask, 0, func(entity ecs.Entity, table *ecs.Archetype, index int) {
@@ -350,6 +358,14 @@ func extractLights(world *ecs.World, scratch []LightGPU) []LightGPU {
 		if light.Type == render.LightTypeSpot {
 			for slot := uint32(0); slot < spotShadowCount; slot++ {
 				if spotShadowEntities[slot] == entity {
+					shadowIndex = int32(slot)
+					break
+				}
+			}
+		}
+		if light.Type == render.LightTypePoint {
+			for slot := uint32(0); slot < pointShadowCount; slot++ {
+				if pointShadowEntities[slot] == entity {
 					shadowIndex = int32(slot)
 					break
 				}

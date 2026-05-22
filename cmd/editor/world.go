@@ -218,10 +218,12 @@ func spawnPointOrb(worlds app.Worlds, orbMesh asset.MeshHandle, name string, pos
 	ecs.Set(worlds.Engine, entity, orbMaterial)
 
 	ecs.Set(worlds.Engine, entity, render.Light{
-		Type:      render.LightTypePoint,
-		Color:     color,
-		Intensity: intensity,
-		Range:     range_,
+		Type:        render.LightTypePoint,
+		Color:       color,
+		Intensity:   intensity,
+		Range:       range_,
+		CastShadows: true,
+		ShadowBias:  0.005,
 	})
 	ecs.Set(worlds.Engine, entity, app.Name{Value: name})
 }

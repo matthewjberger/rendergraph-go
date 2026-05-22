@@ -119,6 +119,24 @@ func createGlobalBgLayout(device *wgpu.Device) (*wgpu.BindGroupLayout, error) {
 					ViewDimension: wgpu.TextureViewDimension2D,
 				},
 			},
+			{
+				Binding:    14,
+				Visibility: wgpu.ShaderStageFragment,
+				Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeUniform},
+			},
+			{
+				Binding:    15,
+				Visibility: wgpu.ShaderStageFragment,
+				Texture: wgpu.TextureBindingLayout{
+					SampleType:    wgpu.TextureSampleTypeUnfilterableFloat,
+					ViewDimension: wgpu.TextureViewDimensionCubeArray,
+				},
+			},
+			{
+				Binding:    16,
+				Visibility: wgpu.ShaderStageFragment,
+				Sampler:    wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeNonFiltering},
+			},
 		},
 	})
 	if err != nil {
@@ -345,6 +363,7 @@ func createGlobalBindGroup(
 	shadow *Shadow,
 	shadowLightVP *wgpu.Buffer,
 	spotShadow *SpotShadow,
+	pointShadow *PointShadow,
 ) (*wgpu.BindGroup, error) {
 	bg, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 		Label:  "mesh global bind group",
@@ -364,6 +383,9 @@ func createGlobalBindGroup(
 			{Binding: 11, Sampler: shadow.Sampler},
 			{Binding: 12, Buffer: spotShadow.UniformBuffer, Offset: 0, Size: wgpu.WholeSize},
 			{Binding: 13, TextureView: spotShadow.AtlasView},
+			{Binding: 14, Buffer: pointShadow.DataBuffer, Offset: 0, Size: wgpu.WholeSize},
+			{Binding: 15, TextureView: pointShadow.CubeArrayView},
+			{Binding: 16, Sampler: pointShadow.Sampler},
 		},
 	})
 	if err != nil {
