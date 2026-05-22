@@ -101,6 +101,48 @@ func NewIBL(device *wgpu.Device, queue *wgpu.Queue) (*IBL, error) {
 	return ibl, nil
 }
 
+// Rebake re-runs the procedural sky capture + mip generation +
+// environment filter. The cubemap textures are reused (same size,
+// same format); the irradiance + prefiltered textures are
+// reallocated because [filterEnvironmentMap] currently creates
+// fresh outputs. Callers that cached IBL views must rebuild bind
+// groups after Rebake — meshPass invalidates via [InvalidateIBL].
+//
+// The BRDF LUT isn't recomputed — it's a static integral that
+// doesn't depend on the environment.
+//
+// Intended call site is a render command drained at frame setup
+// so the GPU work happens before any pass writes the swapchain.
+func (ibl *IBL) Rebake(device *wgpu.Device, queue *wgpu.Queue) error {
+	if ibl.PrefilteredView != nil {
+		ibl.PrefilteredView.Release()
+		ibl.PrefilteredView = nil
+	}
+	if ibl.Prefiltered != nil {
+		ibl.Prefiltered.Release()
+		ibl.Prefiltered = nil
+	}
+	if ibl.IrradianceView != nil {
+		ibl.IrradianceView.Release()
+		ibl.IrradianceView = nil
+	}
+	if ibl.Irradiance != nil {
+		ibl.Irradiance.Release()
+		ibl.Irradiance = nil
+	}
+
+	if err := captureProceduralCubemap(ibl, device, queue); err != nil {
+		return err
+	}
+	if err := generateCubemapMipmaps(ibl.Cubemap, device, queue); err != nil {
+		return err
+	}
+	if err := filterEnvironmentMap(ibl, device, queue); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Release frees every GPU resource the IBL bundle owns.
 func (ibl *IBL) Release() {
 	if ibl.Sampler != nil {
