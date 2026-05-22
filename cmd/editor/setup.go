@@ -149,5 +149,8 @@ func editorApp() *app.App {
 				log.Fatal(err)
 			}
 		},
+		PreRender: func(engine *ecs.World) {
+			drawLightGizmos(engine)
+		},
 	}
 }
