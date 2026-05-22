@@ -44,7 +44,7 @@ Schedules are `ecs.Schedule` values — ordered slices of named `func(*ecs.World
 
 Mesh, texture, material, and glTF loading sit on typed caches stored as resources on the engine world.
 
-`MeshAssets` registers vertex buffers and returns `MeshHandle` indices. Every registered mesh carries its local-space AABB so the bounding-volume overlay and any spatial query can read bounds without re-walking vertices. Built-in primitives (cube, sphere, plane) are registered by `RegisterPrimitives` and exposed as a `Primitives` resource.
+`MeshAssets` registers vertex buffers and returns `MeshHandle` indices. Every registered mesh carries its local-space AABB so the bounding-volume overlay and any spatial query can read bounds without re-walking vertices. Built-in primitives (`UnitTriangle`, `UnitQuad`, `UnitCube`) are registered by `RegisterPrimitives` and exposed as a `Primitives` resource.
 
 `TextureCache` registers GPU textures with full mip chains. Callers pick `TextureSRGB` or `TextureLinear` at register time so base color and emissive maps land in sRGB while normal, metallic-roughness, and occlusion maps stay linear. A 1×1 white texture is registered by default and bound wherever a real texture has not been supplied.
 
@@ -81,17 +81,17 @@ The slot indirection means a pass's source code references "color" and "depth" w
 
 Bind groups are version-tracked. Resources stamp a counter every time their underlying handle changes (transient reallocations on resize, external view replacement each frame). A pass records the version it cached its bind groups against; on a mismatch the pass's `InvalidateBindGroups` runs and rebuilds them. Write-only attachments don't trigger invalidation, so a pass that writes to the swapchain doesn't rebuild on every present.
 
-The standard pipeline writes an HDR scene buffer through the sky, mesh, grid, debug-lines, gizmo, and outline passes, then runs FXAA and an ACES tonemap into the swapchain through the postprocess pass. Lighting is clustered; the cluster bounds and assignment passes run before the mesh pass.
+The standard pipeline writes an HDR scene buffer through the sky, mesh, grid, lines, and outline passes, runs the postprocess pass to tonemap that buffer with ACES into an LDR target, runs FXAA on the LDR result, overlays the gizmo and UI passes on top of the FXAA output, and finishes with a present pass that blits to the swapchain. Clustered lighting is two compute dispatches the mesh pass owns internally (`cluster_bounds` then `cluster_light_assign`), not separate graph nodes; the mesh fragment shader reads the resulting light grid to iterate only the lights that overlap the current cluster.
 
 ## Feature layer
 
 Built on rendering and the ECS, the feature layer covers everything that is not the base PBR pipeline.
 
-The **retained UI** is a third ECS world. Nodes carry `Color`, `Text`, `Parent`, `Rect`, `Hit`, `Focus`, and text-input buffers as components. The layout system and hit-test system walk this world's tables; the renderer's UI quad and UI text passes iterate the same components from a graph pass. The bridge resource `ui.WorldRef` lets the engine world's render passes see into the UI world.
+The **retained UI** is a third ECS world. UI entities carry `Node` (the rectangle plus anchor, padding, layout mode, and resolved screen-space rect), `Color`, `Text`, `Parent`, `Interactive`, and `TextInput` as components. `LayoutSystem` resolves the tree's rects each frame; `InteractionSystem` updates pointer state and emits `EntityClicked` events. The renderer's UI quad and UI text passes iterate the same components from a graph pass. The bridge resource `ui.WorldRef` lets the engine world's render passes see into the UI world.
 
 **Picking** is a render pass that draws entity IDs into an offscreen render target, then reads back the texel under the cursor. The readback completes one or two frames later, asynchronously; the platform layer polls `ProcessPickingReadback` each frame and dispatches a pick result when one is ready.
 
-**Gizmos**, **outlines**, and **debug lines** are separate passes that overlay the scene with translate/rotate/scale handles, selected-entity outlines, and arbitrary debug geometry (normals, bounding volumes, lines registered through the `Lines` resource).
+**Gizmos** are a dedicated overlay pass with their own pipeline; they support translate, rotate, and scale handles via `GizmoMode`. **Outlines** are a two-stage pair (selection mask + outline) that highlights selected entities. **Debug lines** — bounding volumes, normals, and arbitrary world-space lines registered through the `Lines` resource — go through the lines pass.
 
 **Animation** has two halves. The glTF loader captures animation clips and channels into `LoadedScene.Animations`. An `AnimationPlayer` component plus a sampling system reads those clips at runtime and writes interpolated transforms into the affected entities' `LocalTransform`. The skinning side of the pipeline is in progress — meshes that ship with skin bindings are loaded but not yet sampled to bone matrices.
 

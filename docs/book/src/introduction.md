@@ -71,13 +71,13 @@ Schedules are named slices of `func(*ecs.World)` values. Inter-system data flows
 
 ## What the engine ships with
 
-Rendering is image-based PBR with a metallic-roughness workflow. Directional, point, and spot lights drive a clustered-lighting pass. A procedural sky cubemap feeds an IBL filter; the filtered cubemap, BRDF LUT, and material textures land on the mesh pass. Post-processing covers FXAA and an ACES tonemap into the swapchain through a dedicated postprocess pass.
+Rendering is image-based PBR with a metallic-roughness workflow. Directional, point, and spot lights are culled per-frame into a 16×9×24 cluster grid by two compute dispatches the mesh pass owns. A procedural sky cubemap feeds an IBL filter; the filtered cubemap, BRDF LUT, and material textures land on the mesh pass. The postprocess pass does an ACES filmic tonemap from the HDR scene buffer into an LDR target; FXAA, UI, and the final present pass build on that.
 
 The render graph is a DAG of passes that declare their reads and writes. Compile topologically sorts the passes, allocates any transient textures whose handles are still empty, decides clear-vs-load by who writes first, and freezes an execution order. RenderFrame walks the sorted list every frame.
 
-Retained UI is its own ECS world. The layout system and the hit-test system are systems on that world; the renderer's UI quad and UI text passes iterate its components the same way mesh passes iterate the engine world's. Font glyph atlases live in the texture cache.
+Retained UI is its own ECS world. The layout system and the interaction system are systems on that world; the renderer's UI quad and UI text passes iterate its components the same way mesh passes iterate the engine world's. The bitmap font atlas is hand-rolled and owned directly by the UI text pass — no third-party font dependency to ship with wasm builds.
 
-Input covers keyboard, mouse, and gamepad through GLFW; the same input layer is replayed from JavaScript events when running in the browser. Picking goes through a dedicated render pass that reads back entity IDs from a GPU buffer. A debug-line system draws bounding volumes, normals, and gizmos when those toggles are flipped.
+Input covers keyboard and mouse through GLFW on the desktop; the same `render.Input` struct is filled from JavaScript event listeners in the browser. Picking goes through a dedicated render pass that draws entity IDs into an offscreen buffer and reads them back asynchronously. A handful of debug overlays — bounding volumes, normals, the editor grid — go through the lines pass. Gizmos and selection outlines are their own passes overlaid on the LDR scene before present.
 
 The same code runs on Windows, Linux, macOS, and the web. The desktop builds are plain `go build`. The web build is `GOOS=js GOARCH=wasm go build` plus `wasm_exec.js`.
 
