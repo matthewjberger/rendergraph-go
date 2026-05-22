@@ -18,6 +18,8 @@ import (
 	"indigo/app"
 	"indigo/ecs"
 	"indigo/render"
+	"indigo/render/asset"
+	"indigo/render/pass"
 	"indigo/transform"
 	"indigo/ui"
 	"indigo/window"
@@ -124,17 +126,17 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 
 	ecs.SetResource(engine, render.DefaultCamera())
 	ecs.SetResource(engine, render.DefaultPanOrbitController())
-	ecs.SetResource(engine, render.NewPicking())
+	ecs.SetResource(engine, pass.NewPicking())
 	ecs.SetResource(engine, render.NewGizmos())
 
 	ecs.Register[Spinner](worlds.Game)
 	ecs.SetResource(engine, buildHud(worlds.UI))
 
 	worlds.EngineSchedule.Push("graphics_toggles", render.UpdateGraphicsToggles)
-	worlds.EngineSchedule.Push("gizmos", render.UpdateGizmos)
+	worlds.EngineSchedule.Push("gizmos", pass.UpdateGizmos)
 	worlds.EngineSchedule.Push("pan_orbit_camera", render.UpdatePanOrbitCamera)
 	worlds.EngineSchedule.Push("transform_propagation", transform.UpdateGlobalTransforms)
-	worlds.EngineSchedule.Push("bounding_volume_lines", render.UpdateBoundingVolumeLines)
+	worlds.EngineSchedule.Push("bounding_volume_lines", pass.UpdateBoundingVolumeLines)
 	_ = advanceSpinners
 
 	demo := editorApp()
@@ -144,9 +146,9 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 	if demo.ConfigureRenderGraph != nil {
 		demo.ConfigureRenderGraph(engine, renderer)
 	}
-	primitives := ecs.MustResource[render.Primitives](engine)
+	primitives := ecs.MustResource[asset.Primitives](engine)
 	initializeWorldEntities(worlds,
-		[]render.MeshHandle{primitives.UnitTriangle, primitives.UnitQuad, primitives.UnitCube},
+		[]asset.MeshHandle{primitives.UnitTriangle, primitives.UnitQuad, primitives.UnitCube},
 		[]string{"Triangle", "Quad", "Cube"},
 	)
 	loadDefaultGltf(engine, renderer, "assets/gltf/DamagedHelmet.glb")
@@ -169,20 +171,20 @@ func loadDefaultGltf(engine *ecs.World, renderer *render.Renderer, path string) 
 	}
 }
 
-// loadGltfInto loads path via [render.LoadGltfFile], spawns its
-// nodes via [render.SpawnLoadedScene], and attaches an [app.Name]
+// loadGltfInto loads path via [asset.LoadGltfFile], spawns its
+// nodes via [asset.SpawnLoadedScene], and attaches an [app.Name]
 // component to every spawned entity (falling back to
 // "<basename>/node_<index>" when the glTF node has no name).
 // Returns the spawned entities in node-index order so the caller
 // can attach further per-entity state (selection, etc.).
 func loadGltfInto(engine *ecs.World, renderer *render.Renderer, path string) ([]ecs.Entity, error) {
-	assets := ecs.MustResource[render.MeshAssetsResource](engine).Assets
-	cache := ecs.MustResource[render.TextureCacheResource](engine).Cache
-	scene, err := render.LoadGltfFile(renderer.Device, renderer.Queue, assets, cache, path)
+	assets := ecs.MustResource[asset.MeshAssetsResource](engine).Assets
+	cache := ecs.MustResource[asset.TextureCacheResource](engine).Cache
+	scene, err := asset.LoadGltfFile(renderer.Device, renderer.Queue, assets, cache, path)
 	if err != nil {
 		return nil, err
 	}
-	entities := render.SpawnLoadedScene(engine, scene)
+	entities := asset.SpawnLoadedScene(engine, scene)
 	baseName := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	nameMask := ecs.MustMaskOf[app.Name](engine)
 	for i, e := range entities {
@@ -207,41 +209,41 @@ func loadGltfInto(engine *ecs.World, renderer *render.Renderer, path string) ([]
 func editorApp() *app.App {
 	return &app.App{
 		ConfigureRenderGraph: func(world *ecs.World, renderer *render.Renderer) {
-			if _, err := render.AddSkyPass(renderer); err != nil {
+			if _, err := pass.AddSkyPass(renderer); err != nil {
 				log.Fatal(err)
 			}
-			if _, err := render.AddMeshPass(renderer); err != nil {
+			if _, err := pass.AddMeshPass(renderer); err != nil {
 				log.Fatal(err)
 			}
-			if _, err := render.AddPickingPass(renderer); err != nil {
+			if _, err := pass.AddPickingPass(renderer); err != nil {
 				log.Fatal(err)
 			}
-			if _, err := render.AddSelectionMaskPass(renderer); err != nil {
+			if _, err := pass.AddSelectionMaskPass(renderer); err != nil {
 				log.Fatal(err)
 			}
-			if _, err := render.AddGridPass(renderer); err != nil {
+			if _, err := pass.AddGridPass(renderer); err != nil {
 				log.Fatal(err)
 			}
-			if _, err := render.AddLinesPass(renderer); err != nil {
+			if _, err := pass.AddLinesPass(renderer); err != nil {
 				log.Fatal(err)
 			}
-			if _, err := render.AddOutlinePass(renderer); err != nil {
+			if _, err := pass.AddOutlinePass(renderer); err != nil {
 				log.Fatal(err)
 			}
-			_, fxaaOutputID, err := render.AddFxaaPass(renderer)
+			_, fxaaOutputID, err := pass.AddFxaaPass(renderer)
 			if err != nil {
 				log.Fatal(err)
 			}
-			if _, err := render.AddGizmoPass(renderer, fxaaOutputID); err != nil {
+			if _, err := pass.AddGizmoPass(renderer, fxaaOutputID); err != nil {
 				log.Fatal(err)
 			}
-			if _, err := render.AddUiQuadPass(renderer, fxaaOutputID); err != nil {
+			if _, err := pass.AddUiQuadPass(renderer, fxaaOutputID); err != nil {
 				log.Fatal(err)
 			}
-			if _, err := render.AddUiTextPass(renderer, fxaaOutputID); err != nil {
+			if _, err := pass.AddUiTextPass(renderer, fxaaOutputID); err != nil {
 				log.Fatal(err)
 			}
-			if _, err := render.AddPresentPass(renderer, fxaaOutputID); err != nil {
+			if _, err := pass.AddPresentPass(renderer, fxaaOutputID); err != nil {
 				log.Fatal(err)
 			}
 		},
@@ -457,7 +459,7 @@ func inspectorLabel(b *ui.Builder, initial string) ecs.Entity {
 // a matching game entity per engine entity carrying its Spinner state
 // and EngineEntity bridge. Also spawns a sun-like directional light
 // pointing straight down.
-func initializeWorldEntities(worlds app.Worlds, meshes []render.MeshHandle, meshNames []string) {
+func initializeWorldEntities(worlds app.Worlds, meshes []asset.MeshHandle, meshNames []string) {
 	const (
 		gridExtent  = 3
 		gridSpacing = 1.5
@@ -484,7 +486,7 @@ func initializeWorldEntities(worlds app.Worlds, meshes []render.MeshHandle, mesh
 	engineMask := ecs.MustMaskOf[transform.LocalTransform](worlds.Engine) |
 		ecs.MustMaskOf[transform.GlobalTransform](worlds.Engine) |
 		ecs.MustMaskOf[transform.LocalTransformDirty](worlds.Engine) |
-		ecs.MustMaskOf[render.RenderMesh](worlds.Engine) |
+		ecs.MustMaskOf[asset.RenderMesh](worlds.Engine) |
 		ecs.MustMaskOf[app.Name](worlds.Engine)
 
 	gameMask := ecs.MustMaskOf[Spinner](worlds.Game) |
@@ -509,7 +511,7 @@ func initializeWorldEntities(worlds app.Worlds, meshes []render.MeshHandle, mesh
 			ecs.Set(worlds.Engine, engineEntity, local)
 			ecs.Set(worlds.Engine, engineEntity, transform.IdentityGlobalTransform())
 			meshIndex := index % len(meshes)
-			ecs.Set(worlds.Engine, engineEntity, render.RenderMesh{Mesh: meshes[meshIndex]})
+			ecs.Set(worlds.Engine, engineEntity, asset.RenderMesh{Mesh: meshes[meshIndex]})
 			ecs.Set(worlds.Engine, engineEntity, app.Name{Value: meshNames[meshIndex] + " " + strconv.Itoa(index+1)})
 
 			gameEntity := worlds.Game.Spawn(gameMask)

@@ -10,7 +10,7 @@ import "indigo/ecs"
 // engine world.
 //
 // Apps install one of these themselves when wiring the engine + UI
-// worlds together; see [indigo/render.AddUiQuadPass] for the
+// worlds together; see [indigo/pass.AddUiQuadPass] for the
 // expected setup.
 type WorldRef struct {
 	World *ecs.World

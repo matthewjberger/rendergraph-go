@@ -7,6 +7,8 @@ import (
 	"indigo/app"
 	"indigo/ecs"
 	"indigo/render"
+	"indigo/render/asset"
+	"indigo/render/pass"
 	"indigo/transform"
 	"indigo/ui"
 	"indigo/window"
@@ -142,7 +144,7 @@ func driveTextInputs(worlds app.Worlds) {
 }
 
 func commitInspectorName(worlds app.Worlds, value string) {
-	target, ok := render.SelectedTarget(worlds.Engine)
+	target, ok := pass.SelectedTarget(worlds.Engine)
 	if !ok {
 		return
 	}
@@ -401,7 +403,7 @@ func (c *HudContext) refreshInteractiveHovers() {
 		paintHover(c.UI, b, idle, hover)
 	}
 
-	selected, hasSelected := render.SelectedTarget(c.Engine)
+	selected, hasSelected := pass.SelectedTarget(c.Engine)
 	for i, row := range c.Hud.TreeRows {
 		if row.ID == 0 {
 			continue
@@ -511,7 +513,7 @@ type namedEntity struct {
 }
 
 func (c *HudContext) refreshEntityTree() {
-	selected, hasSelected := render.SelectedTarget(c.Engine)
+	selected, hasSelected := pass.SelectedTarget(c.Engine)
 
 	nameMask := ecs.MustMaskOf[app.Name](c.Engine)
 	var entries []namedEntity
@@ -576,7 +578,7 @@ func (c *HudContext) updateTreeScroll() {
 }
 
 func (c *HudContext) refreshInspector() {
-	target, hasTarget := render.SelectedTarget(c.Engine)
+	target, hasTarget := pass.SelectedTarget(c.Engine)
 	editing := c.Pointer.FocusedEntity == c.Hud.InspectorName
 
 	if !hasTarget {
@@ -606,7 +608,7 @@ func (c *HudContext) refreshInspector() {
 		c.setText(c.Hud.ScaleLabel, "")
 	}
 
-	if mat, ok := ecs.Get[render.Material](c.Engine, target); ok {
+	if mat, ok := ecs.Get[asset.Material](c.Engine, target); ok {
 		c.setText(c.Hud.MaterialLabel, fmt.Sprintf("MAT  %s", formatRGBA(mat.BaseColor)))
 	} else {
 		c.setText(c.Hud.MaterialLabel, "")

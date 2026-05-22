@@ -5,6 +5,8 @@ import (
 
 	"indigo/ecs"
 	"indigo/render"
+	"indigo/render/asset"
+	"indigo/render/pass"
 	"indigo/transform"
 	"indigo/ui"
 	"indigo/window"
@@ -31,24 +33,24 @@ func NewEngineWorld(renderer *render.Renderer) (*ecs.World, error) {
 	ecs.Register[transform.GlobalTransform](engine)
 	ecs.Register[transform.Parent](engine)
 	ecs.Register[transform.LocalTransformDirty](engine)
-	ecs.Register[render.RenderMesh](engine)
-	ecs.Register[render.Material](engine)
+	ecs.Register[asset.RenderMesh](engine)
+	ecs.Register[asset.Material](engine)
 	ecs.Register[render.Light](engine)
 	ecs.Register[render.Selected](engine)
 	ecs.Register[Name](engine)
 
-	meshAssets := render.NewMeshAssets()
-	primitives, err := render.RegisterPrimitives(renderer.Device, meshAssets)
+	meshAssets := asset.NewMeshAssets()
+	primitives, err := asset.RegisterPrimitives(renderer.Device, meshAssets)
 	if err != nil {
 		return nil, fmt.Errorf("app: register primitives: %w", err)
 	}
 
-	textureCache := render.NewTextureCache()
+	textureCache := asset.NewTextureCache()
 	if _, err := textureCache.EnsureWhite(renderer.Device, renderer.Queue); err != nil {
 		return nil, fmt.Errorf("app: register white texture: %w", err)
 	}
 
-	lines := &render.Lines{}
+	lines := &pass.Lines{}
 
 	ecs.SetResource(engine, window.Window{
 		Viewport: window.ViewportSize{
@@ -57,9 +59,9 @@ func NewEngineWorld(renderer *render.Renderer) (*ecs.World, error) {
 		},
 	})
 	ecs.SetResource(engine, render.RendererResource{Renderer: renderer})
-	ecs.SetResource(engine, render.MeshAssetsResource{Assets: meshAssets})
-	ecs.SetResource(engine, render.TextureCacheResource{Cache: textureCache})
-	ecs.SetResource(engine, render.LinesResource{Lines: lines})
+	ecs.SetResource(engine, asset.MeshAssetsResource{Assets: meshAssets})
+	ecs.SetResource(engine, asset.TextureCacheResource{Cache: textureCache})
+	ecs.SetResource(engine, pass.LinesResource{Lines: lines})
 	ecs.SetResource(engine, primitives)
 	ecs.SetResource(engine, render.NewInput())
 	ecs.SetResource(engine, render.DefaultGraphicsSettings())

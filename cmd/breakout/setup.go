@@ -12,6 +12,8 @@ import (
 	"indigo/app"
 	"indigo/ecs"
 	"indigo/render"
+	"indigo/render/asset"
+	"indigo/render/pass"
 	"indigo/transform"
 )
 
@@ -69,7 +71,7 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 		demo.ConfigureRenderGraph(engine, renderer)
 	}
 
-	assets := ecs.MustResource[render.MeshAssetsResource](engine).Assets
+	assets := ecs.MustResource[asset.MeshAssetsResource](engine).Assets
 	palette, err := registerBreakoutPalette(renderer.Device, assets)
 	if err != nil {
 		log.Fatal(err)
@@ -124,20 +126,20 @@ func spawnBreakoutSun(engine *ecs.World) {
 func breakoutApp() *app.App {
 	return &app.App{
 		ConfigureRenderGraph: func(world *ecs.World, renderer *render.Renderer) {
-			if _, err := render.AddMeshPass(renderer); err != nil {
+			if _, err := pass.AddMeshPass(renderer); err != nil {
 				log.Fatal(err)
 			}
-			_, fxaaOutputID, err := render.AddFxaaPass(renderer)
+			_, fxaaOutputID, err := pass.AddFxaaPass(renderer)
 			if err != nil {
 				log.Fatal(err)
 			}
-			if _, err := render.AddUiQuadPass(renderer, fxaaOutputID); err != nil {
+			if _, err := pass.AddUiQuadPass(renderer, fxaaOutputID); err != nil {
 				log.Fatal(err)
 			}
-			if _, err := render.AddUiTextPass(renderer, fxaaOutputID); err != nil {
+			if _, err := pass.AddUiTextPass(renderer, fxaaOutputID); err != nil {
 				log.Fatal(err)
 			}
-			if _, err := render.AddPresentPass(renderer, fxaaOutputID); err != nil {
+			if _, err := pass.AddPresentPass(renderer, fxaaOutputID); err != nil {
 				log.Fatal(err)
 			}
 		},
@@ -185,8 +187,8 @@ func respawnBricks(worlds app.Worlds, palette brickPalette) {
 	engineMask := ecs.MustMaskOf[transform.LocalTransform](worlds.Engine) |
 		ecs.MustMaskOf[transform.GlobalTransform](worlds.Engine) |
 		ecs.MustMaskOf[transform.LocalTransformDirty](worlds.Engine) |
-		ecs.MustMaskOf[render.RenderMesh](worlds.Engine) |
-		ecs.MustMaskOf[render.Material](worlds.Engine)
+		ecs.MustMaskOf[asset.RenderMesh](worlds.Engine) |
+		ecs.MustMaskOf[asset.Material](worlds.Engine)
 	brickMask := ecs.MustMaskOf[Brick](worlds.Game) | ecs.MustMaskOf[app.EngineEntity](worlds.Game)
 
 	brickWidth := brickHalfWidth * 2
@@ -205,8 +207,8 @@ func respawnBricks(worlds app.Worlds, palette brickPalette) {
 			local.Scale = transform.Vec3{brickHalfWidth * 2, brickHalfY * 2, brickHalfDepth * 2}
 			ecs.Set(worlds.Engine, engineEntity, local)
 			ecs.Set(worlds.Engine, engineEntity, transform.IdentityGlobalTransform())
-			ecs.Set(worlds.Engine, engineEntity, render.RenderMesh{Mesh: palette.Cube})
-			ecs.Set(worlds.Engine, engineEntity, render.Material{BaseColor: rowColor})
+			ecs.Set(worlds.Engine, engineEntity, asset.RenderMesh{Mesh: palette.Cube})
+			ecs.Set(worlds.Engine, engineEntity, asset.Material{BaseColor: rowColor})
 
 			gameEntity := worlds.Game.Spawn(brickMask)
 			ecs.Set(worlds.Game, gameEntity, Brick{

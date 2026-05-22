@@ -6,6 +6,7 @@ import (
 	"indigo/app"
 	"indigo/ecs"
 	"indigo/render"
+	"indigo/render/asset"
 	"indigo/transform"
 	"indigo/window"
 )
@@ -48,8 +49,8 @@ func spawnBreakoutScene(worlds app.Worlds, palette brickPalette) {
 	engineMask := ecs.MustMaskOf[transform.LocalTransform](worlds.Engine) |
 		ecs.MustMaskOf[transform.GlobalTransform](worlds.Engine) |
 		ecs.MustMaskOf[transform.LocalTransformDirty](worlds.Engine) |
-		ecs.MustMaskOf[render.RenderMesh](worlds.Engine) |
-		ecs.MustMaskOf[render.Material](worlds.Engine)
+		ecs.MustMaskOf[asset.RenderMesh](worlds.Engine) |
+		ecs.MustMaskOf[asset.Material](worlds.Engine)
 
 	paddleMask := ecs.MustMaskOf[Paddle](worlds.Game) | ecs.MustMaskOf[app.EngineEntity](worlds.Game)
 	ballMask := ecs.MustMaskOf[Ball](worlds.Game) | ecs.MustMaskOf[app.EngineEntity](worlds.Game)
@@ -61,8 +62,8 @@ func spawnBreakoutScene(worlds app.Worlds, palette brickPalette) {
 	paddleLocal.Scale = transform.Vec3{paddleHalfWidth * 2, paddleHalfY * 2, paddleHalfDepth * 2}
 	ecs.Set(worlds.Engine, paddleEngine, paddleLocal)
 	ecs.Set(worlds.Engine, paddleEngine, transform.IdentityGlobalTransform())
-	ecs.Set(worlds.Engine, paddleEngine, render.RenderMesh{Mesh: palette.Cube})
-	ecs.Set(worlds.Engine, paddleEngine, render.Material{BaseColor: palette.Paddle})
+	ecs.Set(worlds.Engine, paddleEngine, asset.RenderMesh{Mesh: palette.Cube})
+	ecs.Set(worlds.Engine, paddleEngine, asset.Material{BaseColor: palette.Paddle})
 
 	paddleGame := worlds.Game.Spawn(paddleMask)
 	ecs.Set(worlds.Game, paddleGame, Paddle{
@@ -78,8 +79,8 @@ func spawnBreakoutScene(worlds app.Worlds, palette brickPalette) {
 	ballLocal.Scale = transform.Vec3{ballRadius * 2, ballRadius * 2, ballRadius * 2}
 	ecs.Set(worlds.Engine, ballEngine, ballLocal)
 	ecs.Set(worlds.Engine, ballEngine, transform.IdentityGlobalTransform())
-	ecs.Set(worlds.Engine, ballEngine, render.RenderMesh{Mesh: palette.Cube})
-	ecs.Set(worlds.Engine, ballEngine, render.Material{BaseColor: palette.Ball})
+	ecs.Set(worlds.Engine, ballEngine, asset.RenderMesh{Mesh: palette.Cube})
+	ecs.Set(worlds.Engine, ballEngine, asset.Material{BaseColor: palette.Ball})
 
 	ballGame := worlds.Game.Spawn(ballMask)
 	ecs.Set(worlds.Game, ballGame, Ball{
@@ -106,8 +107,8 @@ func spawnBreakoutScene(worlds app.Worlds, palette brickPalette) {
 			local.Scale = transform.Vec3{brickHalfWidth * 2, brickHalfY * 2, brickHalfDepth * 2}
 			ecs.Set(worlds.Engine, engineEntity, local)
 			ecs.Set(worlds.Engine, engineEntity, transform.IdentityGlobalTransform())
-			ecs.Set(worlds.Engine, engineEntity, render.RenderMesh{Mesh: palette.Cube})
-			ecs.Set(worlds.Engine, engineEntity, render.Material{BaseColor: rowColor})
+			ecs.Set(worlds.Engine, engineEntity, asset.RenderMesh{Mesh: palette.Cube})
+			ecs.Set(worlds.Engine, engineEntity, asset.Material{BaseColor: rowColor})
 
 			gameEntity := worlds.Game.Spawn(brickMask)
 			ecs.Set(worlds.Game, gameEntity, Brick{

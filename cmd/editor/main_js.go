@@ -11,6 +11,7 @@ import (
 	"indigo/app"
 	"indigo/ecs"
 	"indigo/render"
+	"indigo/render/pass"
 	"indigo/transform"
 	"indigo/window"
 )
@@ -103,9 +104,9 @@ func main() {
 			js.Global().Get("console").Call("error", "render error: "+err.Error())
 		}
 
-		render.ProcessPickingReadback(renderer, worlds.Engine)
+		pass.ProcessPickingReadback(renderer, worlds.Engine)
 
-		if picking := ecs.MustResource[*render.Picking](worlds.Engine); (*picking).Result != nil {
+		if picking := ecs.MustResource[*pass.Picking](worlds.Engine); (*picking).Result != nil {
 			result := (*picking).Result
 			(*picking).Result = nil
 			handlePickResult(worlds, result.EntityID)
@@ -150,10 +151,10 @@ func installCanvasInputListeners(canvas js.Value, engine *ecs.World) {
 		button := event.Get("button").Int()
 		setMouseButton(engine, button, true)
 		if button == 0 {
-			picking := *ecs.MustResource[*render.Picking](engine)
+			picking := *ecs.MustResource[*pass.Picking](engine)
 			if picking != nil {
 				input := ecs.MustResource[render.Input](engine)
-				render.QueuePick(picking, uint32(input.MousePosition[0]), uint32(input.MousePosition[1]))
+				pass.QueuePick(picking, uint32(input.MousePosition[0]), uint32(input.MousePosition[1]))
 			}
 		}
 		return nil

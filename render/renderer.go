@@ -29,7 +29,7 @@ const DepthFormat = wgpu.TextureFormatDepth32Float
 // render graph and the ids of the graph's standard resources
 // (swapchain, scene_color, depth). Mesh registries and primitive
 // handles live as separate engine-world resources (see
-// [MeshAssets] / [Primitives]). The renderer is stored as a resource
+// [asset.MeshAssets] / [asset.Primitives]). The renderer is stored as a resource
 // on the ECS world and is not safe for concurrent use.
 type Renderer struct {
 	Surface       *wgpu.Surface
@@ -239,7 +239,7 @@ type RendererResource struct {
 }
 
 // Release frees every WGPU object owned by the renderer. Mesh
-// registries owned by the engine world ([MeshAssets] resource) are
+// registries owned by the engine world ([asset.MeshAssets] resource) are
 // released independently.
 func (r *Renderer) Release() {
 	if r.Graph != nil {

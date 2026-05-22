@@ -8,8 +8,8 @@
 // state. A few free-function systems
 // ([LayoutSystem], [InteractionSystem]) operate on those components
 // every frame; the engine's render graph consumes the resulting
-// laid-out tree through [indigo/render.AddUiQuadPass] +
-// [indigo/render.AddUiTextPass].
+// laid-out tree through [indigo/pass.AddUiQuadPass] +
+// [indigo/pass.AddUiTextPass].
 //
 // The package deliberately does not generate widget code (no derive
 // macros, no per-widget structs the user must subclass). Apps build

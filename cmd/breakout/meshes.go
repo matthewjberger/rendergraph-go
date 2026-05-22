@@ -3,25 +3,25 @@ package main
 import (
 	"github.com/cogentcore/webgpu/wgpu"
 
-	"indigo/render"
+	"indigo/render/asset"
 )
 
 // whiteCubeVertices returns a 36-vertex unit cube with every vertex
-// colored white. Entities tint it through their [render.Material]
+// colored white. Entities tint it through their [asset.Material]
 // component; the vertex color stays as a neutral multiplicand so the
 // material reads out exactly.
-func whiteCubeVertices() []render.MeshVertex {
+func whiteCubeVertices() []asset.MeshVertex {
 	const s = 0.5
 	white := [4]float32{1, 1, 1, 1}
 
-	face := func(a, b, c, d [3]float32) []render.MeshVertex {
-		v := func(p [3]float32) render.MeshVertex {
-			return render.MeshVertex{
+	face := func(a, b, c, d [3]float32) []asset.MeshVertex {
+		v := func(p [3]float32) asset.MeshVertex {
+			return asset.MeshVertex{
 				Position: [4]float32{p[0], p[1], p[2], 1.0},
 				Color:    white,
 			}
 		}
-		return []render.MeshVertex{v(a), v(b), v(c), v(a), v(c), v(d)}
+		return []asset.MeshVertex{v(a), v(b), v(c), v(a), v(c), v(d)}
 	}
 
 	plusZ := face(
@@ -49,7 +49,7 @@ func whiteCubeVertices() []render.MeshVertex {
 		[3]float32{s, -s, s}, [3]float32{-s, -s, s},
 	)
 
-	out := make([]render.MeshVertex, 0, 36)
+	out := make([]asset.MeshVertex, 0, 36)
 	out = append(out, plusZ...)
 	out = append(out, minusZ...)
 	out = append(out, plusX...)
@@ -63,7 +63,7 @@ func whiteCubeVertices() []render.MeshVertex {
 // ball colors. One white cube mesh + per-entity Material gives every
 // piece its own tint without registering N mesh variants.
 type brickPalette struct {
-	Cube   render.MeshHandle
+	Cube   asset.MeshHandle
 	Rows   [][4]float32
 	Paddle [4]float32
 	Ball   [4]float32
@@ -72,7 +72,7 @@ type brickPalette struct {
 // registerBreakoutPalette uploads the single white cube mesh used by
 // the paddle, ball, and bricks and returns it alongside the per-row /
 // per-element material colors.
-func registerBreakoutPalette(device *wgpu.Device, assets *render.MeshAssets) (brickPalette, error) {
+func registerBreakoutPalette(device *wgpu.Device, assets *asset.MeshAssets) (brickPalette, error) {
 	cube, err := assets.Register(device, "white_cube", whiteCubeVertices())
 	if err != nil {
 		return brickPalette{}, err

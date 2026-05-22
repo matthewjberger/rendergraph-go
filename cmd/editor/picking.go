@@ -4,6 +4,7 @@ import (
 	"indigo/app"
 	"indigo/ecs"
 	"indigo/render"
+	"indigo/render/asset"
 	"indigo/ui"
 )
 
@@ -37,7 +38,7 @@ func applySelection(engine *ecs.World, pickedID uint32) {
 	if pickedID == 0 {
 		return
 	}
-	renderMask := ecs.MustMaskOf[render.RenderMesh](engine)
+	renderMask := ecs.MustMaskOf[asset.RenderMesh](engine)
 	var picked ecs.Entity
 	found := false
 	engine.ForEach(renderMask, 0, func(e ecs.Entity, _ *ecs.Archetype, _ int) {
