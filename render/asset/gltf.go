@@ -235,6 +235,7 @@ func SpawnLoadedScene(world *ecs.World, scene *LoadedScene) []ecs.Entity {
 	globalMask := ecs.MustMaskOf[transform.GlobalTransform](world)
 	dirtyMask := ecs.MustMaskOf[transform.LocalTransformDirty](world)
 	parentMask := ecs.MustMaskOf[transform.Parent](world)
+	groupRootMask := ecs.MustMaskOf[transform.GroupRoot](world)
 	meshMask := ecs.MustMaskOf[RenderMesh](world)
 	materialMask := ecs.MustMaskOf[Material](world)
 
@@ -242,6 +243,13 @@ func SpawnLoadedScene(world *ecs.World, scene *LoadedScene) []ecs.Entity {
 	for i := range scene.Nodes {
 		entities[i] = world.Spawn(transformMask)
 		ecs.Set(world, entities[i], transform.IdentityGlobalTransform())
+	}
+	for _, rootIdx := range scene.Roots {
+		if rootIdx >= 0 && rootIdx < len(entities) {
+			world.AddComponents(entities[rootIdx], parentMask|groupRootMask)
+			ecs.Set(world, entities[rootIdx], transform.Parent{IsRoot: true})
+			ecs.Set(world, entities[rootIdx], transform.GroupRoot{})
+		}
 	}
 	for i, node := range scene.Nodes {
 		entity := entities[i]

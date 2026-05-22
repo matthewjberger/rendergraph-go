@@ -55,6 +55,7 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 	ecs.SetResource(engine, render.DefaultCamera())
 	ecs.SetResource(engine, render.DefaultPanOrbitController())
 	ecs.SetResource(engine, pass.NewPicking())
+	installPickCycleState(engine)
 	ecs.SetResource(engine, render.NewGizmos())
 
 	ecs.Register[Spinner](worlds.Game)

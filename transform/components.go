@@ -136,3 +136,11 @@ type LocalTransformDirty struct{}
 // world-aligned markers that need to keep their own scale regardless
 // of what the parent does.
 type IgnoreParentScale struct{}
+
+// GroupRoot marks the top entity of a loaded glTF scene (or any
+// other "asset group" the application wants to select as a unit).
+// Hierarchical picking walks the parent chain up until it hits a
+// GroupRoot — the entity carrying the marker is what gets selected
+// on the first click. Subsequent clicks on the same leaf drill
+// down through the chain.
+type GroupRoot struct{}

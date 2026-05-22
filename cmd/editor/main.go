@@ -174,6 +174,9 @@ func installInputCallbacks(glfwWindow *glfw.Window, engine *ecs.World) {
 			if pressed {
 				picking := *ecs.MustResource[*pass.Picking](engine)
 				if picking != nil {
+					altHeld := glfwWindow.GetKey(glfw.KeyLeftAlt) == glfw.Press || glfwWindow.GetKey(glfw.KeyRightAlt) == glfw.Press
+					shiftHeld := glfwWindow.GetKey(glfw.KeyLeftShift) == glfw.Press || glfwWindow.GetKey(glfw.KeyRightShift) == glfw.Press
+					recordPickModifiers(engine, altHeld, shiftHeld)
 					pass.QueuePick(picking, uint32(input.MousePosition[0]), uint32(input.MousePosition[1]))
 				}
 			}

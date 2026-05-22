@@ -176,6 +176,9 @@ func installCanvasInputListeners(canvas js.Value, engine *ecs.World) {
 			picking := *ecs.MustResource[*pass.Picking](engine)
 			if picking != nil {
 				input := ecs.MustResource[render.Input](engine)
+				altHeld := event.Get("altKey").Bool()
+				shiftHeld := event.Get("shiftKey").Bool()
+				recordPickModifiers(engine, altHeld, shiftHeld)
 				pass.QueuePick(picking, uint32(input.MousePosition[0]), uint32(input.MousePosition[1]))
 			}
 		}
