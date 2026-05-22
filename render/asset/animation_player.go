@@ -68,13 +68,29 @@ func UpdateAnimationPlayers(world *ecs.World) {
 	}
 	delta := w.Timing.DeltaSeconds
 
+	// Defer dirty marks until after the ForEach: transform.MarkDirty
+	// adds the LocalTransformDirty marker component, which is a
+	// structural mutation that ECS forbids during iteration.
+	var dirty []ecs.Entity
+	seen := make(map[ecs.Entity]struct{}, 16)
+
 	mask := ecs.MustMaskOf[AnimationPlayer](world)
 	world.ForEach(mask, 0, func(entity ecs.Entity, table *ecs.Archetype, index int) {
 		players, _ := ecs.Column[AnimationPlayer](world, table)
 		p := &players[index]
 		advancePlayer(p, delta)
-		applyPlayer(world, p)
+		applyPlayer(world, p, func(target ecs.Entity) {
+			if _, ok := seen[target]; ok {
+				return
+			}
+			seen[target] = struct{}{}
+			dirty = append(dirty, target)
+		})
 	})
+
+	for _, target := range dirty {
+		transform.MarkDirty(world, target)
+	}
 }
 
 func advancePlayer(p *AnimationPlayer, delta float32) {
@@ -97,7 +113,7 @@ func advancePlayer(p *AnimationPlayer, delta float32) {
 	}
 }
 
-func applyPlayer(world *ecs.World, p *AnimationPlayer) {
+func applyPlayer(world *ecs.World, p *AnimationPlayer, markDirty func(ecs.Entity)) {
 	if p.CurrentClip < 0 || p.CurrentClip >= len(p.Clips) {
 		return
 	}
@@ -108,37 +124,42 @@ func applyPlayer(world *ecs.World, p *AnimationPlayer) {
 		if !ok {
 			continue
 		}
-		sampleChannelInto(world, target, channel, p.Time)
+		if sampleChannelInto(world, target, channel, p.Time) {
+			markDirty(target)
+		}
 	}
 }
 
-func sampleChannelInto(world *ecs.World, target ecs.Entity, channel *AnimationChannel, t float32) {
+// sampleChannelInto writes the sampled value into target's
+// LocalTransform and returns true when something actually changed
+// (so the caller can defer the [transform.MarkDirty] call until
+// after the outer ForEach completes — adding the dirty marker
+// component mid-iteration would trip the ECS structural-mutation
+// guard).
+func sampleChannelInto(world *ecs.World, target ecs.Entity, channel *AnimationChannel, t float32) bool {
 	keyA, keyB, factor := findKeyframe(channel.Sampler.Inputs, t)
 	local, ok := ecs.GetMut[transform.LocalTransform](world, target)
 	if !ok {
-		return
+		return false
 	}
-	changed := false
 	switch channel.Property {
 	case AnimationTranslation:
 		if len(channel.Sampler.Vec3Outputs) > 0 {
 			local.Translation = sampleVec3(channel.Sampler.Vec3Outputs, keyA, keyB, factor, channel.Sampler.Interpolation)
-			changed = true
+			return true
 		}
 	case AnimationScale:
 		if len(channel.Sampler.Vec3Outputs) > 0 {
 			local.Scale = sampleVec3(channel.Sampler.Vec3Outputs, keyA, keyB, factor, channel.Sampler.Interpolation)
-			changed = true
+			return true
 		}
 	case AnimationRotation:
 		if len(channel.Sampler.Vec4Outputs) > 0 {
 			local.Rotation = sampleQuat(channel.Sampler.Vec4Outputs, keyA, keyB, factor, channel.Sampler.Interpolation)
-			changed = true
+			return true
 		}
 	}
-	if changed {
-		transform.MarkDirty(world, target)
-	}
+	return false
 }
 
 // findKeyframe returns the indices of the keyframes bracketing t
