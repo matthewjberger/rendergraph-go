@@ -58,7 +58,7 @@ TickFrame(worlds, app, delta)
 
 handle right-click, drive text inputs, handle UI clicks
 
-renderer.RenderFrame(engine)
+render.RenderFrame(renderer, engine)
     execute compiled graph passes in topological order
     present
 

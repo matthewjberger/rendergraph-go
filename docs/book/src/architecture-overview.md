@@ -15,7 +15,7 @@ Asset Layer:        Meshes, Textures, Materials, glTF, IBL
                             |
 Core Layer:         Transform Hierarchy, Input, Window, Schedules
                             |
-Foundation Layer:   ECS (archetype), Math (math32), GPU (wgpu-go)
+Foundation Layer:   ECS (archetype), Math (mgl32), GPU (wgpu)
 ```
 
 ## Foundation layer
@@ -24,7 +24,7 @@ The bottom of the graph is three independent systems that everything else depend
 
 The ECS is a custom archetype Entity Component System under `ecs/`. Components are plain structs registered against a world. Entities are 64-bit generational handles. The storage lays out each component type as its own contiguous slice and groups entities into tables keyed by the exact set of component types they carry. Iteration walks the table directly through typed columns, which is a packed-memory loop the hardware prefetcher likes. Generics carry the typed accessors: `Get[T]`, `Set[T]`, `Resource[T]`, `Iter1..6[T1..T6]`. The `Iter` family is templated through a `go:generate` step rather than written by hand.
 
-Math uses Go's `math32` for scalar work and small vector / matrix helpers in `transform/math.go`. There is no `gonum` or third-party linear-algebra library in the hot path; the engine's transform code operates on flat `[16]float32` matrices.
+Math uses `github.com/go-gl/mathgl/mgl32` aliased through `transform/math.go` as `Vec2`, `Vec3`, `Mat4`, and `Quat`. `Mat4` is `[16]float32`, so transform code reads and writes packed column-major matrices without any extra indirection.
 
 GPU access goes through a wgpu binding. One Go surface targets Vulkan, Metal, DirectX 12, and WebGPU. Every rendering pass in indigo is built against wgpu directly — there is no intermediate graphics abstraction.
 
@@ -36,9 +36,9 @@ The transform hierarchy propagates `LocalTransform` through `Parent` relationshi
 
 Input aggregates keyboard, mouse, and scroll state each frame into the `render.Input` resource on the engine world. The desktop path reads from GLFW; the web path replays JavaScript events into the same struct. `InputBeginFrame` is called in `PostFrame` to clear per-frame deltas.
 
-Windowing is `window.Window`, a resource on every world that carries the viewport size and `window.Timing`. `window.Advance` advances the timing each frame; reading delta time is `MustResource[window.Window](world).Timing.Delta`.
+Windowing is `window.Window`, a resource on every world that carries the viewport size and a `Timing` struct. `window.Advance` advances the timing each frame; reading delta time is `MustResource[window.Window](world).Timing.DeltaSeconds`.
 
-Schedules are `ecs.Schedule` values — ordered slices of named `func(*ecs.World)` entries. Three schedules ship: `EngineSchedule`, `GameSchedule`, `UISchedule`. `TickFrame` runs them in that order.
+Schedules are `ecs.Schedule` values — ordered slices of named `func(*ecs.World)` entries. Three schedules ship — `UISchedule`, `GameSchedule`, `EngineSchedule` — and `TickFrame` runs them in that order so engine systems see the latest UI and game state for the frame.
 
 ## Asset layer
 
@@ -48,7 +48,7 @@ Mesh, texture, material, and glTF loading sit on typed caches stored as resource
 
 `TextureCache` registers GPU textures with full mip chains. Callers pick `TextureSRGB` or `TextureLinear` at register time so base color and emissive maps land in sRGB while normal, metallic-roughness, and occlusion maps stay linear. A 1×1 white texture is registered by default and bound wherever a real texture has not been supplied.
 
-`MaterialRegistry` and `MaterialTextureArrays` keep PBR materials and their texture arrays in a global, indexable form. Each `RenderMesh` references its material by `MaterialID`, which the mesh shader reads to pull the matching texture slot.
+`MaterialRegistry` and `MaterialTextureArrays` keep PBR materials and their texture arrays in a global, indexable form. `RenderMesh` itself is just a `MeshHandle`; the matching `Material` component on the same entity carries the BaseColor, factors, and packed layer indices into the shared sRGB / linear texture arrays. The mesh pass uploads a per-instance `material_id` buffer alongside the per-instance transforms, and the WGSL mesh shader indexes the global material storage buffer through it.
 
 `LoadGltfReader` parses a `.glb` or `.gltf` document, uploads every primitive into the mesh cache, decodes embedded PNG / JPEG images into the texture cache (with auto-classification by sRGB vs linear based on which material slot references each texture), and returns a `LoadedScene` that mirrors the glTF node hierarchy. `SpawnLoadedScene` materializes the scene as ECS entities with `transform.Parent` links so the engine's transform propagation handles world matrices automatically. The load step is pure CPU work; the spawn step writes ECS entities — the split means an app can inspect or transform the loaded data before any entity exists.
 
@@ -62,14 +62,16 @@ The render graph is a declarative pass DAG. A pass is a struct of function value
 
 ```go
 type Pass struct {
-    Name     string
-    Reads    []string
-    Writes   []string
-    State    any
-    Prepare  func(state any, ctx *PassContext) error
-    Execute  func(state any, ctx *PassContext) error
-    Release  func(state any)
+    Name   string
+    Reads  []string
+    Writes []string
+
+    State any
+
+    Prepare              func(state any, ctx *PassContext) error
+    Execute              func(state any, ctx *PassContext) error
     InvalidateBindGroups func(state any)
+    Release              func(state any)
 }
 ```
 
@@ -97,7 +99,7 @@ The **retained UI** is a third ECS world. Nodes carry `Color`, `Text`, `Parent`,
 
 The `app` package wires the engine world, game world, and UI world together with their cross-world bridges, and offers a small set of lifecycle hooks for the platform layer to invoke.
 
-`app.NewWorlds(renderer)` builds all three worlds and installs `EngineRef` on the game world and `ui.WorldRef` on the engine world. `app.App` is a struct of optional function values — `Initialize`, `ConfigureRenderGraph`, `RunSystems`, `PreRender` — that the platform layer calls at fixed points. Sync helpers (`SyncEngineTransform`, `SyncEngineRenderMesh`, ...) move state from game-side entities to engine-side entities through a typed `EngineEntity` link, replacing the scattered `EngineRef.World.Mutate(...)` calls a hand-built app would otherwise sprinkle through its systems.
+`app.NewWorlds(renderer)` builds all three worlds and installs `EngineRef` on the game world and `ui.WorldRef` on the engine world. `app.App` is a struct of optional function values — `Initialize`, `ConfigureRenderGraph`, `RunSystems`, `PreRender` — that the platform layer calls at fixed points. Sync helpers (`SyncEngineTransform`, `SyncEngineTranslation`, `SyncEngineRotation`, `DespawnLinked`) move state from game-side entities to engine-side entities through a typed `EngineEntity` link, replacing the scattered `EngineRef.World.Mutate(...)` calls a hand-built app would otherwise sprinkle through its systems.
 
 ## Application layer
 
@@ -110,8 +112,8 @@ Both apps share the same engine binary surface. The web build is the same Go pro
 A handful of tradeoffs are deliberate:
 
 - The engine has no scripting layer. Systems are plain Go; the app brings its own.
-- There is no automatic resource cleanup for handles. The `cleanup` resource holds a deferred list, and apps push GPU resources to it explicitly.
 - Transient textures are not aliased between non-overlapping passes today. Each transient is its own GPU texture. A pooling layer would save memory on large graphs but isn't load-bearing at current graph sizes.
 - The renderer is single-threaded. Encoder construction, bind group rebuilds, and per-pass `Prepare` all happen on the main goroutine.
+- Skinning is not yet wired through to the mesh pass. `LoadedScene.Animations` is captured and an `AnimationPlayer` component exists, but skeletal vertices are not yet sampled to bone matrices at draw time.
 
 These are scope decisions, not regressions. The remaining chapters cover each layer in depth.
