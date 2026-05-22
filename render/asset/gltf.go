@@ -286,6 +286,13 @@ func SpawnLoadedScene(world *ecs.World, scene *LoadedScene) []ecs.Entity {
 		}
 	}
 
+	// The loader sets transform.Parent directly via ecs.Set above,
+	// which bypasses the UpdateParent helper. The transform
+	// children cache is keyed on Parent values and would stay
+	// stale (no children mapped for any of the new entities)
+	// without an explicit invalidate.
+	transform.InvalidateChildrenCache(world)
+
 	// Auto-attach an AnimationPlayer to the first scene root when
 	// the source glTF carries clips. The player owns a copy of the
 	// clips plus the per-load node-index-to-entity map so per-frame
