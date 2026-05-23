@@ -10,7 +10,7 @@ struct SsgiParams {
 };
 
 const KERNEL_SIZE: u32 = 16u;
-const THICKNESS: f32 = 0.3;
+const THICKNESS: f32 = 0.15;
 
 @group(0) @binding(0) var depth_texture:       texture_depth_2d;
 @group(0) @binding(1) var normal_texture:      texture_2d<f32>;
