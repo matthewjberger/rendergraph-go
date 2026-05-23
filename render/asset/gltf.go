@@ -39,6 +39,8 @@ type LoadedScene struct {
 	Meshes     []LoadedMesh
 	Materials  []Material
 	Animations []AnimationClip
+	Lights     []LoadedLight
+	Cameras    []LoadedCamera
 	// SkinSpecs[i] holds the joint node indices + inverse-bind
 	// matrices for glTF skin i. SpawnLoadedScene materializes each
 	// SkinSpec into an asset.Skin once joint entities exist.
@@ -69,6 +71,40 @@ type skinnedSpawnRecord struct {
 	Entity      ecs.Entity
 }
 
+// LoadedLightType mirrors render.LightType without depending on
+// the render package (which already imports this package).
+type LoadedLightType uint8
+
+const (
+	LoadedLightDirectional LoadedLightType = iota
+	LoadedLightPoint
+	LoadedLightSpot
+)
+
+// LoadedLight is one entry from the document's
+// KHR_lights_punctual.lights array. Nodes that reference it via
+// their own KHR_lights_punctual extension store the index in
+// SceneNode.LightIndex.
+type LoadedLight struct {
+	Name           string
+	Type           LoadedLightType
+	Color          [3]float32
+	Intensity      float32
+	Range          float32
+	InnerConeAngle float32
+	OuterConeAngle float32
+}
+
+// LoadedCamera carries the perspective parameters of a glTF
+// camera. Nodes referencing it store the index in
+// SceneNode.CameraIndex.
+type LoadedCamera struct {
+	Name        string
+	FovYRadians float32
+	Near        float32
+	Far         float32
+}
+
 // SceneNode is one glTF node: a TRS transform, optional mesh +
 // material assignment, and child node indices. Multi-primitive
 // meshes expand into ChildPrimitives so each primitive lands on its
@@ -88,6 +124,12 @@ type SceneNode struct {
 	// ChildPrimitives are SkinnedMeshHandles rather than
 	// MeshHandles.
 	SkinIndex int
+	// LightIndex points into LoadedScene.Lights when this node
+	// carries a KHR_lights_punctual light reference; -1 otherwise.
+	LightIndex int
+	// CameraIndex points into LoadedScene.Cameras when this node
+	// has a camera; -1 otherwise.
+	CameraIndex int
 	// SkinnedMesh holds the skinned counterpart of Mesh when
 	// SkinIndex >= 0 and the primitive carried JOINTS_0 attrs.
 	SkinnedMesh       SkinnedMeshHandle
@@ -240,6 +282,9 @@ func LoadGltfReaderOpts(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAsse
 		return nil, fmt.Errorf("gltf %q: %w", label, err)
 	}
 
+	scene.Lights = readPunctualLights(doc)
+	scene.Cameras = readCameras(doc)
+
 	scene.Nodes = make([]SceneNode, len(doc.Nodes))
 	for i, node := range doc.Nodes {
 		translation, rotation, scale := nodeTRS(node)
@@ -250,10 +295,16 @@ func LoadGltfReaderOpts(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAsse
 			Scale:       scale,
 			Children:    childIndicesOf(node),
 			SkinIndex:   -1,
+			LightIndex:  -1,
+			CameraIndex: -1,
 		}
 		if node.Skin != nil {
 			out.SkinIndex = int(*node.Skin)
 		}
+		if node.Camera != nil {
+			out.CameraIndex = int(*node.Camera)
+		}
+		out.LightIndex = readNodeLightIndex(node.Extensions)
 		if node.Mesh != nil {
 			prims := meshPrimitives[*node.Mesh]
 			// Pre-classify primitives so multi-primitive nodes
@@ -583,28 +634,164 @@ func readEmissiveStrengthExt(ext gltf.Extensions) float32 {
 	type payload struct {
 		EmissiveStrength float64 `json:"emissiveStrength"`
 	}
-	var decoded payload
-	switch v := raw.(type) {
-	case json.RawMessage:
-		if err := json.Unmarshal(v, &decoded); err != nil {
-			return 1.0
-		}
-	case []byte:
-		if err := json.Unmarshal(v, &decoded); err != nil {
-			return 1.0
-		}
-	case map[string]any:
-		if s, ok := v["emissiveStrength"].(float64); ok {
-			return float32(s)
-		}
+	body, err := jsonRawFromExt(raw)
+	if err != nil {
 		return 1.0
-	default:
+	}
+	var decoded payload
+	if err := json.Unmarshal(body, &decoded); err != nil {
 		return 1.0
 	}
 	if decoded.EmissiveStrength <= 0 {
 		return 1.0
 	}
 	return float32(decoded.EmissiveStrength)
+}
+
+// readPunctualLights extracts the document-level
+// KHR_lights_punctual.lights array. Returns nil when the
+// extension is absent.
+func readPunctualLights(doc *gltf.Document) []LoadedLight {
+	if doc == nil || doc.Extensions == nil {
+		return nil
+	}
+	raw, ok := doc.Extensions["KHR_lights_punctual"]
+	if !ok {
+		return nil
+	}
+	type spotPayload struct {
+		InnerConeAngle float64 `json:"innerConeAngle"`
+		OuterConeAngle float64 `json:"outerConeAngle"`
+	}
+	type lightPayload struct {
+		Name      string       `json:"name"`
+		Type      string       `json:"type"`
+		Color     [3]float64   `json:"color"`
+		Intensity *float64     `json:"intensity"`
+		Range     *float64     `json:"range"`
+		Spot      *spotPayload `json:"spot"`
+	}
+	type payload struct {
+		Lights []lightPayload `json:"lights"`
+	}
+	body, err := jsonRawFromExt(raw)
+	if err != nil {
+		return nil
+	}
+	var decoded payload
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return nil
+	}
+	out := make([]LoadedLight, 0, len(decoded.Lights))
+	for _, l := range decoded.Lights {
+		color := [3]float32{1, 1, 1}
+		if l.Color != [3]float64{0, 0, 0} {
+			color = [3]float32{float32(l.Color[0]), float32(l.Color[1]), float32(l.Color[2])}
+		}
+		intensity := float32(1)
+		if l.Intensity != nil {
+			intensity = float32(*l.Intensity)
+		}
+		var rng float32
+		if l.Range != nil {
+			rng = float32(*l.Range)
+		}
+		var inner, outer float32
+		if l.Spot != nil {
+			inner = float32(l.Spot.InnerConeAngle)
+			outer = float32(l.Spot.OuterConeAngle)
+		} else {
+			outer = float32(math.Pi / 4)
+		}
+		var ty LoadedLightType
+		switch l.Type {
+		case "point":
+			ty = LoadedLightPoint
+		case "spot":
+			ty = LoadedLightSpot
+		default:
+			ty = LoadedLightDirectional
+		}
+		out = append(out, LoadedLight{
+			Name:           l.Name,
+			Type:           ty,
+			Color:          color,
+			Intensity:      intensity,
+			Range:          rng,
+			InnerConeAngle: inner,
+			OuterConeAngle: outer,
+		})
+	}
+	return out
+}
+
+// readCameras extracts the document's perspective camera array.
+// Orthographic cameras are skipped (the engine's view camera is
+// perspective-only today).
+func readCameras(doc *gltf.Document) []LoadedCamera {
+	if doc == nil || len(doc.Cameras) == 0 {
+		return nil
+	}
+	out := make([]LoadedCamera, 0, len(doc.Cameras))
+	for _, cam := range doc.Cameras {
+		if cam.Perspective == nil {
+			out = append(out, LoadedCamera{Name: cam.Name, FovYRadians: float32(math.Pi / 3), Near: 0.1, Far: 1000})
+			continue
+		}
+		far := float32(1000)
+		if cam.Perspective.Zfar != nil {
+			far = float32(*cam.Perspective.Zfar)
+		}
+		out = append(out, LoadedCamera{
+			Name:        cam.Name,
+			FovYRadians: float32(cam.Perspective.Yfov),
+			Near:        float32(cam.Perspective.Znear),
+			Far:         far,
+		})
+	}
+	return out
+}
+
+// readNodeLightIndex peels the node-level KHR_lights_punctual
+// payload (which carries a single "light" index into the
+// document's lights array). Returns -1 when absent.
+func readNodeLightIndex(ext gltf.Extensions) int {
+	if ext == nil {
+		return -1
+	}
+	raw, ok := ext["KHR_lights_punctual"]
+	if !ok {
+		return -1
+	}
+	type payload struct {
+		Light int `json:"light"`
+	}
+	body, err := jsonRawFromExt(raw)
+	if err != nil {
+		return -1
+	}
+	var decoded payload
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return -1
+	}
+	return decoded.Light
+}
+
+// jsonRawFromExt normalizes the three shapes an extension value
+// can take with qmuntal/gltf (raw bytes, json.RawMessage, or a
+// pre-decoded map) into a JSON byte slice the caller can
+// unmarshal into a typed payload.
+func jsonRawFromExt(raw any) ([]byte, error) {
+	switch v := raw.(type) {
+	case json.RawMessage:
+		return v, nil
+	case []byte:
+		return v, nil
+	case string:
+		return []byte(v), nil
+	default:
+		return json.Marshal(v)
+	}
 }
 
 func classifyTextures(doc *gltf.Document) []TextureColorSpace {

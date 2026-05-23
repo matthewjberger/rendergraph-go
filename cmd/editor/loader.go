@@ -76,10 +76,58 @@ func spawnLoadedSceneNamed(engine *ecs.World, renderer *render.Renderer, scene *
 		engine.AddComponents(e, nameMask)
 		ecs.Set(engine, e, app.Name{Value: name})
 	}
-	log.Printf("gltf loaded: %s (%d nodes, %d meshes, %d materials, %d animations)",
-		label, len(scene.Nodes), len(scene.Meshes), len(scene.Materials), len(scene.Animations))
+	attachSceneLights(engine, scene, entities)
+	attachSceneCameras(engine, scene, entities)
+	log.Printf("gltf loaded: %s (%d nodes, %d meshes, %d materials, %d animations, %d lights, %d cameras)",
+		label, len(scene.Nodes), len(scene.Meshes), len(scene.Materials), len(scene.Animations), len(scene.Lights), len(scene.Cameras))
 	if len(scene.Roots) > 0 {
 		applyEntitySelection(engine, transform.FindGroupRoot(engine, entities[scene.Roots[0]]))
 	}
 	return entities, nil
+}
+
+func attachSceneLights(engine *ecs.World, scene *asset.LoadedScene, entities []ecs.Entity) {
+	if len(scene.Lights) == 0 {
+		return
+	}
+	lightMask := ecs.MustMaskOf[render.Light](engine)
+	for i, node := range scene.Nodes {
+		if node.LightIndex < 0 || node.LightIndex >= len(scene.Lights) {
+			continue
+		}
+		src := scene.Lights[node.LightIndex]
+		var ty render.LightType
+		switch src.Type {
+		case asset.LoadedLightPoint:
+			ty = render.LightTypePoint
+		case asset.LoadedLightSpot:
+			ty = render.LightTypeSpot
+		default:
+			ty = render.LightTypeDirectional
+		}
+		light := render.Light{
+			Type:           ty,
+			Color:          transform.Vec3{src.Color[0], src.Color[1], src.Color[2]},
+			Intensity:      src.Intensity,
+			Range:          src.Range,
+			InnerConeAngle: src.InnerConeAngle,
+			OuterConeAngle: src.OuterConeAngle,
+		}
+		engine.AddComponents(entities[i], lightMask)
+		ecs.Set(engine, entities[i], light)
+	}
+}
+
+func attachSceneCameras(engine *ecs.World, scene *asset.LoadedScene, entities []ecs.Entity) {
+	if len(scene.Cameras) == 0 {
+		return
+	}
+	camMask := ecs.MustMaskOf[render.CameraMarker](engine)
+	for i, node := range scene.Nodes {
+		if node.CameraIndex < 0 || node.CameraIndex >= len(scene.Cameras) {
+			continue
+		}
+		engine.AddComponents(entities[i], camMask)
+		ecs.Set(engine, entities[i], render.CameraMarker{})
+	}
 }
