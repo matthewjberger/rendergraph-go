@@ -83,7 +83,7 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 	initializeWorldEntities(worlds,
 		[]asset.MeshHandle{primitives.UnitTriangle, primitives.UnitQuad, primitives.UnitCube},
 		[]string{"Triangle", "Quad", "Cube"},
-		primitives.UnitCube,
+		primitives.UnitSphere,
 	)
 	loadDefaultGltf(engine, renderer)
 

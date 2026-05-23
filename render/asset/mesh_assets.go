@@ -2,6 +2,7 @@ package asset
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/cogentcore/webgpu/wgpu"
 )
@@ -20,6 +21,7 @@ type Primitives struct {
 	UnitQuad     MeshHandle
 	UnitCube     MeshHandle
 	UnitPlane    MeshHandle
+	UnitSphere   MeshHandle
 }
 
 // RegisterPrimitives uploads the unit triangle, quad, and cube into
@@ -43,7 +45,11 @@ func RegisterPrimitives(device *wgpu.Device, assets *MeshAssets) (Primitives, er
 	if err != nil {
 		return Primitives{}, err
 	}
-	return Primitives{UnitTriangle: tri, UnitQuad: quad, UnitCube: cube, UnitPlane: plane}, nil
+	sphere, err := assets.Register(device, "unit_sphere", UnitSphereVertices())
+	if err != nil {
+		return Primitives{}, err
+	}
+	return Primitives{UnitTriangle: tri, UnitQuad: quad, UnitCube: cube, UnitPlane: plane, UnitSphere: sphere}, nil
 }
 
 // MeshVertex is the input layout the engine's stock mesh shader
@@ -309,3 +315,47 @@ var UnitCubeVertices = func() []MeshVertex {
 	out = append(out, minusY...)
 	return out
 }()
+
+// UnitSphereVertices returns a 24-segment UV sphere of radius 0.5
+// expanded into non-indexed triangles.
+func UnitSphereVertices() []MeshVertex {
+	const segments = 24
+	const radius = 0.5
+	grid := make([]MeshVertex, 0, (segments+1)*(segments+1))
+	for i := 0; i <= segments; i++ {
+		lat := math.Pi * float64(i) / float64(segments)
+		v := float32(float64(i) / float64(segments))
+		sinLat := float32(math.Sin(lat))
+		cosLat := float32(math.Cos(lat))
+		for j := 0; j <= segments; j++ {
+			lon := 2 * math.Pi * float64(j) / float64(segments)
+			u := float32(float64(j) / float64(segments))
+			sinLon := float32(math.Sin(lon))
+			cosLon := float32(math.Cos(lon))
+			x := radius * sinLat * cosLon
+			y := radius * cosLat
+			z := radius * sinLat * sinLon
+			nx, ny, nz := sinLat*cosLon, cosLat, sinLat*sinLon
+			grid = append(grid, MeshVertex{
+				Position: [4]float32{x, y, z, 1},
+				Normal:   [4]float32{nx, ny, nz, 0},
+				Tangent:  [4]float32{1, 0, 0, 1},
+				UV:       [4]float32{u, v, 0, 0},
+				Color:    [4]float32{1, 1, 1, 1},
+			})
+		}
+	}
+	out := make([]MeshVertex, 0, segments*segments*6)
+	for i := 0; i < segments; i++ {
+		rowA := i * (segments + 1)
+		rowB := (i + 1) * (segments + 1)
+		for j := 0; j < segments; j++ {
+			a := grid[rowA+j]
+			b := grid[rowA+j+1]
+			c := grid[rowB+j]
+			d := grid[rowB+j+1]
+			out = append(out, a, b, c, c, b, d)
+		}
+	}
+	return out
+}
