@@ -700,7 +700,7 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
     if (mat.alpha_mode == 1u && base_color.a < mat.alpha_cutoff) {
         discard;
     }
-    if (mat.alpha_mode == 2u || mat.alpha_mode == 3u) {
+    if (mat.alpha_mode == 2u) {
         discard;
     }
 

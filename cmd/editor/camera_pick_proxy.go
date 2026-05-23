@@ -9,10 +9,11 @@ import (
 
 // spawnCameraPickProxy attaches an invisible child cube to the
 // camera entity so the GPU pick can resolve clicks on the camera
-// gizmo. The cube uses AlphaModePickProxy: mesh / prepass discard,
-// OIT stamps entity_id only with zero color and reveal contribution.
-// The proxy carries a render.PickProxy redirect so applySelection
-// hands selection back to the owning camera entity.
+// gizmo. The cube material uses AlphaModeBlend with alpha=0 so
+// mesh + OIT discard every fragment; the dedicated pick_proxy
+// pass writes the proxy's entity_id into the picking buffer.
+// PickProxy.Target redirects applySelection back to the owning
+// camera entity.
 func spawnCameraPickProxy(engine *ecs.World, camera ecs.Entity) {
 	primitives, ok := ecs.Resource[asset.Primitives](engine)
 	if !ok || primitives == nil {
@@ -39,7 +40,7 @@ func spawnCameraPickProxy(engine *ecs.World, camera ecs.Entity) {
 		MetallicRoughnessLayer: asset.NoTextureLayer,
 		OcclusionLayer:         asset.NoTextureLayer,
 		EmissiveLayer:          asset.NoTextureLayer,
-		AlphaMode:              asset.AlphaModePickProxy,
+		AlphaMode:              asset.AlphaModeBlend,
 		AlphaCutoff:            0.5,
 		IOR:                    1.5,
 		Unlit:                  true,

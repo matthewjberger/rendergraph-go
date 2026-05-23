@@ -111,16 +111,8 @@ fn fragment_main(in: VertexOutput) -> OitOutput {
     let ddy_uv = dpdy(in.uv);
 
     let mat = materials[in.material_index];
-    if (mat.alpha_mode != 2u && mat.alpha_mode != 3u) {
+    if (mat.alpha_mode != 2u) {
         discard;
-    }
-
-    if (mat.alpha_mode == 3u) {
-        var out: OitOutput;
-        out.accum = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-        out.reveal = 0.0;
-        out.entity_id = in.entity_id;
-        return out;
     }
 
     var base_color = mat.base_color * in.color;

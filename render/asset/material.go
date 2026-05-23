@@ -7,11 +7,6 @@ const (
 	AlphaModeOpaque AlphaMode = iota
 	AlphaModeMask
 	AlphaModeBlend
-	// AlphaModePickProxy marks an entity that exists only to stamp
-	// its entity_id into the picking buffer. The mesh + depth +
-	// shadow passes discard these fragments; OIT writes the
-	// entity_id and contributes zero to accum / reveal.
-	AlphaModePickProxy
 )
 
 // Material is the per-entity surface-appearance component. Each
@@ -140,8 +135,6 @@ func (m Material) ToGPU() MaterialGPU {
 		alpha = 1
 	case AlphaModeBlend:
 		alpha = 2
-	case AlphaModePickProxy:
-		alpha = 3
 	}
 	var unlit uint32
 	if m.Unlit {

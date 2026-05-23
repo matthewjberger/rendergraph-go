@@ -130,6 +130,9 @@ func editorApp() *app.App {
 			if _, err := pass.AddMeshPass(renderer, arrays, registry, ibl, shadow, spotShadow, pointShadow); err != nil {
 				log.Fatal(err)
 			}
+			if _, err := pass.AddPickProxyPass(renderer); err != nil {
+				log.Fatal(err)
+			}
 			if _, err := pass.AddPickingPass(renderer); err != nil {
 				log.Fatal(err)
 			}
