@@ -22,24 +22,16 @@ struct SkinnedUniforms {
 @group(1) @binding(1) var material_srgb_array: texture_2d_array<f32>;
 @group(1) @binding(2) var material_sampler:    sampler;
 
-struct SkinnedMaterial {
-    base_color: vec4<f32>,
-    base_layer: u32,
-    alpha_mode: u32,
-    _pad1:      u32,
-    _pad2:      u32,
-};
-
-struct PerEntity {
+struct SkinnedInstance {
+    base_color:   vec4<f32>,
     entity_id:    u32,
     joint_offset: u32,
-    _pad0:        u32,
-    _pad1:        u32,
+    base_layer:   u32,
+    alpha_mode:   u32,
 };
 
 @group(2) @binding(0) var<storage, read> joint_matrices: array<mat4x4<f32>>;
-@group(2) @binding(1) var<storage, read> per_entity:     array<PerEntity>;
-@group(2) @binding(2) var<uniform>       material:       SkinnedMaterial;
+@group(2) @binding(1) var<storage, read> instances:      array<SkinnedInstance>;
 
 struct VertexInput {
     @location(0) position:      vec4<f32>,
@@ -57,6 +49,7 @@ struct VertexOutput {
     @location(1) color: vec4<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) @interpolate(flat) entity_id: u32,
+    @location(4) @interpolate(flat) instance: u32,
 };
 
 struct FragmentOutput {
@@ -77,7 +70,7 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32)
     // plays nicer with non-affine joint matrices.
     let position = vec4<f32>(input.position.xyz, 1.0);
     let normal = input.normal.xyz;
-    let joint_offset = per_entity[instance_index].joint_offset;
+    let joint_offset = instances[instance_index].joint_offset;
     var skinned_position = vec3<f32>(0.0, 0.0, 0.0);
     var skinned_normal = vec3<f32>(0.0, 0.0, 0.0);
     for (var index = 0u; index < 4u; index = index + 1u) {
@@ -103,18 +96,20 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32)
     out.world_normal = skinned_normal;
     out.color = input.color;
     out.uv = input.uv.xy;
-    out.entity_id = per_entity[instance_index].entity_id;
+    out.entity_id = instances[instance_index].entity_id;
+    out.instance = instance_index;
     return out;
 }
 
 @fragment
 fn fragment_main(in: VertexOutput) -> FragmentOutput {
-    if (material.alpha_mode == 2u) {
+    let instance = instances[in.instance];
+    if (instance.alpha_mode == 2u) {
         discard;
     }
-    var base_color = material.base_color;
-    if (material.base_layer != NO_TEXTURE_LAYER) {
-        let layer = i32(material.base_layer & 0xFFFFu);
+    var base_color = instance.base_color;
+    if (instance.base_layer != NO_TEXTURE_LAYER) {
+        let layer = i32(instance.base_layer & 0xFFFFu);
         let sampled = textureSample(material_srgb_array, material_sampler, in.uv, layer);
         base_color = base_color * sampled;
     }

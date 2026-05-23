@@ -55,7 +55,8 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32)
     let material_index = material_indices[slot];
     let mat = materials[material_index];
     var out: VertexOutput;
-    out.clip_position = view_proj * model * input.position;
+    let world = model * input.position;
+    out.clip_position = view_proj * world;
     out.alpha_mode = mat.alpha_mode;
     return out;
 }

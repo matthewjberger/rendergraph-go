@@ -11,7 +11,6 @@ import (
 	"github.com/matthewjberger/indigo/ecs"
 	"github.com/matthewjberger/indigo/render"
 	"github.com/matthewjberger/indigo/render/asset"
-	"github.com/matthewjberger/indigo/transform"
 )
 
 //go:embed skinned_mesh_oit.wgsl
@@ -25,14 +24,6 @@ type skinnedOitViewProj struct {
 	Pad2     float32
 }
 
-type skinnedOitEntity struct {
-	perEntityBuffer *wgpu.Buffer
-	materialBuffer  *wgpu.Buffer
-	bindGroup       *wgpu.BindGroup
-	jointGen        uint64
-	jointBuffer     *wgpu.Buffer
-}
-
 type skinnedMeshOitState struct {
 	pipeline       *wgpu.RenderPipeline
 	viewProjLayout *wgpu.BindGroupLayout
@@ -44,7 +35,11 @@ type skinnedMeshOitState struct {
 	globalGroup    *wgpu.BindGroup
 	aspectFn       func() float32
 
-	perEntity map[ecs.Entity]*skinnedOitEntity
+	handleBindGroup *wgpu.BindGroup
+	jointGen        uint64
+	instancesGen    uint64
+	jointBuffer     *wgpu.Buffer
+	instancesBuffer *wgpu.Buffer
 }
 
 // AddSkinnedMeshOitPass renders blend-mode skinned meshes into the
@@ -113,8 +108,7 @@ func newSkinnedMeshOitState(device *wgpu.Device, aspect func() float32) (*skinne
 		Label: "skinned_mesh_oit handle layout",
 		Entries: []wgpu.BindGroupLayoutEntry{
 			{Binding: 0, Visibility: wgpu.ShaderStageVertex, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage}},
-			{Binding: 1, Visibility: wgpu.ShaderStageVertex, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage}},
-			{Binding: 2, Visibility: wgpu.ShaderStageFragment, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeUniform}},
+			{Binding: 1, Visibility: wgpu.ShaderStageVertex | wgpu.ShaderStageFragment, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage}},
 		},
 	})
 	if err != nil {
@@ -246,7 +240,6 @@ func newSkinnedMeshOitState(device *wgpu.Device, aspect func() float32) (*skinne
 		viewProjGroup:  viewProjGroup,
 		uniformBuffer:  uniformBuffer,
 		aspectFn:       aspect,
-		perEntity:      make(map[ecs.Entity]*skinnedOitEntity),
 	}, nil
 }
 
@@ -292,89 +285,22 @@ func skinnedMeshOitPrepare(s any, context *render.PassContext) error {
 	if !ok || skinningRes == nil || skinningRes.Compute == nil {
 		return nil
 	}
-	jointBuffer := skinningRes.Compute.JointMatrixBuffer()
-	if jointBuffer == nil {
-		return nil
-	}
-	generation := skinningRes.Compute.Generation()
-
-	skinnedMask := ecs.MustMaskOf[asset.SkinnedMesh](context.World) |
-		ecs.MustMaskOf[transform.GlobalTransform](context.World)
-	context.World.ForEach(skinnedMask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {
-		material, ok := ecs.Get[asset.Material](context.World, entity)
-		if !ok || material == nil || material.AlphaMode != asset.AlphaModeBlend {
-			return
-		}
-		buffers := state.perEntity[entity]
-		if buffers == nil {
-			buffers = &skinnedOitEntity{}
-			state.perEntity[entity] = buffers
-		}
-		if buffers.perEntityBuffer == nil {
-			buf, err := context.Device.CreateBuffer(&wgpu.BufferDescriptor{
-				Label: "skinned_mesh_oit per-entity",
-				Size:  uint64(unsafe.Sizeof(skinnedPerEntity{})),
-				Usage: wgpu.BufferUsageStorage | wgpu.BufferUsageCopyDst,
-			})
-			if err != nil {
-				delete(state.perEntity, entity)
-				return
-			}
-			buffers.perEntityBuffer = buf
-		}
-		if buffers.materialBuffer == nil {
-			buf, err := context.Device.CreateBuffer(&wgpu.BufferDescriptor{
-				Label: "skinned_mesh_oit material",
-				Size:  uint64(unsafe.Sizeof(skinnedMaterial{})),
-				Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
-			})
-			if err != nil {
-				delete(state.perEntity, entity)
-				return
-			}
-			buffers.materialBuffer = buf
-		}
-		per := skinnedPerEntity{EntityID: entity.ID, JointOffset: skinningRes.Compute.JointOffset(entity)}
-		writeBuffer(context.Device, context.Queue, context.Encoder, buffers.perEntityBuffer, 0, bytesOf(&per))
-		matData := skinnedMaterial{
-			BaseColor: material.BaseColor,
-			BaseLayer: material.BaseColorLayer,
-			AlphaMode: uint32(material.ToGPU().AlphaMode),
-		}
-		writeBuffer(context.Device, context.Queue, context.Encoder, buffers.materialBuffer, 0, bytesOf(&matData))
-
-		if buffers.bindGroup != nil && (buffers.jointGen != generation || buffers.jointBuffer != jointBuffer) {
-			buffers.bindGroup.Release()
-			buffers.bindGroup = nil
-		}
-		if buffers.bindGroup == nil {
-			bg, err := context.Device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-				Label:  "skinned_mesh_oit handle bg",
-				Layout: state.handleLayout,
-				Entries: []wgpu.BindGroupEntry{
-					{Binding: 0, Buffer: jointBuffer, Offset: 0, Size: wgpu.WholeSize},
-					{Binding: 1, Buffer: buffers.perEntityBuffer, Offset: 0, Size: wgpu.WholeSize},
-					{Binding: 2, Buffer: buffers.materialBuffer, Offset: 0, Size: uint64(unsafe.Sizeof(skinnedMaterial{}))},
-				},
-			})
-			if err != nil {
-				return
-			}
-			buffers.bindGroup = bg
-			buffers.jointGen = generation
-			buffers.jointBuffer = jointBuffer
-		}
-	})
+	ensureSkinnedHandleBindGroup(context.Device, state.handleLayout, &state.handleBindGroup,
+		&state.jointGen, &state.instancesGen, &state.jointBuffer, &state.instancesBuffer, skinningRes.Compute)
 	return nil
 }
 
 func skinnedMeshOitExecute(s any, context *render.PassContext) error {
 	state := s.(*skinnedMeshOitState)
-	if len(state.perEntity) == 0 {
+	if state.handleBindGroup == nil {
 		return nil
 	}
 	skinningRes, ok := ecs.Resource[SkinningComputeResource](context.World)
-	if !ok || skinningRes == nil || skinningRes.Compute == nil || skinningRes.Compute.JointMatrixBuffer() == nil {
+	if !ok || skinningRes == nil || skinningRes.Compute == nil {
+		return nil
+	}
+	groups := skinningRes.Compute.BlendGroups()
+	if len(groups) == 0 {
 		return nil
 	}
 	assets := ecs.MustResource[asset.SkinnedMeshAssetsResource](context.World).Assets
@@ -411,26 +337,16 @@ func skinnedMeshOitExecute(s any, context *render.PassContext) error {
 	passEnc.SetPipeline(state.pipeline)
 	passEnc.SetBindGroup(0, state.viewProjGroup, nil)
 	passEnc.SetBindGroup(1, state.globalGroup, nil)
+	passEnc.SetBindGroup(2, state.handleBindGroup, nil)
 
-	skinnedMask := ecs.MustMaskOf[asset.SkinnedMesh](context.World) |
-		ecs.MustMaskOf[transform.GlobalTransform](context.World)
-	context.World.ForEach(skinnedMask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {
-		skinned, _ := ecs.Get[asset.SkinnedMesh](context.World, entity)
-		if skinned == nil {
-			return
-		}
-		buffers := state.perEntity[entity]
-		if buffers == nil || buffers.bindGroup == nil {
-			return
-		}
-		entry, ok := assets.Lookup(skinned.Mesh)
+	for _, group := range groups {
+		entry, ok := assets.Lookup(group.Mesh)
 		if !ok || entry == nil {
-			return
+			continue
 		}
-		passEnc.SetBindGroup(2, buffers.bindGroup, nil)
 		passEnc.SetVertexBuffer(0, entry.Vertices, 0, wgpu.WholeSize)
-		passEnc.Draw(entry.VertexCount, 1, 0, 0)
-	})
+		passEnc.Draw(entry.VertexCount, group.Count, 0, group.FirstInstance)
+	}
 	passEnc.End()
 	passEnc.Release()
 	return nil
@@ -438,18 +354,9 @@ func skinnedMeshOitExecute(s any, context *render.PassContext) error {
 
 func skinnedMeshOitRelease(s any) {
 	state := s.(*skinnedMeshOitState)
-	for _, buffers := range state.perEntity {
-		if buffers.bindGroup != nil {
-			buffers.bindGroup.Release()
-		}
-		if buffers.perEntityBuffer != nil {
-			buffers.perEntityBuffer.Release()
-		}
-		if buffers.materialBuffer != nil {
-			buffers.materialBuffer.Release()
-		}
+	if state.handleBindGroup != nil {
+		state.handleBindGroup.Release()
 	}
-	state.perEntity = nil
 	if state.globalGroup != nil {
 		state.globalGroup.Release()
 	}

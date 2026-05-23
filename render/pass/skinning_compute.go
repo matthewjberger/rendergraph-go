@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"hash/fnv"
+	"sort"
 	"unsafe"
 
 	"github.com/cogentcore/webgpu/wgpu"
@@ -25,6 +26,27 @@ type GpuSkinData struct {
 	BaseBoneIndex   uint32
 	BaseIbmIndex    uint32
 	BaseOutputIndex uint32
+}
+
+// SkinnedInstance is the per-instance record the skinned render +
+// shadow shaders read by instance index: base color + texture
+// layer + alpha mode for shading, the entity id for picking, and
+// the joint offset selecting this instance's slice of the shared
+// joint-matrix buffer.
+type SkinnedInstance struct {
+	BaseColor   [4]float32
+	EntityID    uint32
+	JointOffset uint32
+	BaseLayer   uint32
+	AlphaMode   uint32
+}
+
+// SkinnedDrawGroup is a contiguous run of same-mesh instances in
+// the instance buffer, collapsed into one instanced draw.
+type SkinnedDrawGroup struct {
+	Mesh          asset.SkinnedMeshHandle
+	FirstInstance uint32
+	Count         uint32
 }
 
 // SkinningCompute gathers every skinned entity's joints into shared
@@ -69,6 +91,17 @@ type SkinningCompute struct {
 	// render passes that cache a bind group referencing it can
 	// detect staleness and rebuild.
 	generation uint64
+
+	// Per-instance batch: instances ordered by (transparency, mesh)
+	// so same-mesh runs are contiguous and collapse into draw
+	// groups. The render + shadow passes read instancesBuffer by
+	// instance index. instancesGen bumps on realloc.
+	instances       []SkinnedInstance
+	instancesBuffer *wgpu.Buffer
+	instancesCap    int
+	instancesGen    uint64
+	opaqueGroups    []SkinnedDrawGroup
+	blendGroups     []SkinnedDrawGroup
 }
 
 // Generation returns a counter that changes whenever the shared
@@ -77,6 +110,19 @@ type SkinningCompute struct {
 func (sc *SkinningCompute) Generation() uint64 {
 	return sc.generation
 }
+
+// InstancesBuffer is the shared per-instance data buffer the
+// skinned render + shadow passes read by instance index.
+func (sc *SkinningCompute) InstancesBuffer() *wgpu.Buffer { return sc.instancesBuffer }
+
+// InstancesGeneration bumps when the instance buffer reallocates.
+func (sc *SkinningCompute) InstancesGeneration() uint64 { return sc.instancesGen }
+
+// OpaqueGroups returns the opaque same-mesh instanced draw runs.
+func (sc *SkinningCompute) OpaqueGroups() []SkinnedDrawGroup { return sc.opaqueGroups }
+
+// BlendGroups returns the blend-mode same-mesh instanced draw runs.
+func (sc *SkinningCompute) BlendGroups() []SkinnedDrawGroup { return sc.blendGroups }
 
 // SkinningComputeResource exposes the compute on the engine world
 // so the skinned mesh + shadow passes can read its output buffer
@@ -176,6 +222,10 @@ func (sc *SkinningCompute) Release() {
 		}
 	}
 	sc.boneBuffer, sc.ibmBuffer, sc.skinDataBuffer, sc.jointBuffer = nil, nil, nil, nil
+	if sc.instancesBuffer != nil {
+		sc.instancesBuffer.Release()
+		sc.instancesBuffer = nil
+	}
 	if sc.bindGroup != nil {
 		sc.bindGroup.Release()
 		sc.bindGroup = nil
@@ -329,6 +379,96 @@ func hashSkin(skin *asset.Skin) uint64 {
 	return hasher.Sum64()
 }
 
+// buildInstances gathers a per-instance record for every skinned
+// entity, orders them by (opaque-before-blend, mesh) so same-mesh
+// runs are contiguous, and collapses each run into a draw group.
+// Each instance carries its own joint offset, so the ordering is
+// independent of the joint cache layout.
+func (sc *SkinningCompute) buildInstances(world *ecs.World) {
+	sc.instances = sc.instances[:0]
+	sc.opaqueGroups = sc.opaqueGroups[:0]
+	sc.blendGroups = sc.blendGroups[:0]
+
+	type record struct {
+		instance    SkinnedInstance
+		mesh        asset.SkinnedMeshHandle
+		transparent bool
+	}
+	var records []record
+	mask := ecs.MustMaskOf[asset.SkinnedMesh](world) | ecs.MustMaskOf[transform.GlobalTransform](world)
+	world.ForEach(mask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {
+		sm, _ := ecs.Get[asset.SkinnedMesh](world, entity)
+		if sm == nil || sm.Skin == nil {
+			return
+		}
+		instance := SkinnedInstance{
+			BaseColor:   [4]float32{1, 1, 1, 1},
+			EntityID:    entity.ID,
+			JointOffset: sc.JointOffset(entity),
+			BaseLayer:   0xFFFFFFFF,
+		}
+		if material, ok := ecs.Get[asset.Material](world, entity); ok && material != nil {
+			instance.BaseColor = material.BaseColor
+			instance.BaseLayer = material.BaseColorLayer
+			instance.AlphaMode = uint32(material.ToGPU().AlphaMode)
+		}
+		records = append(records, record{instance: instance, mesh: sm.Mesh, transparent: instance.AlphaMode == 2})
+	})
+	if len(records) == 0 {
+		return
+	}
+	sort.SliceStable(records, func(i, j int) bool {
+		if records[i].transparent != records[j].transparent {
+			return !records[i].transparent
+		}
+		return records[i].mesh < records[j].mesh
+	})
+	for _, r := range records {
+		sc.instances = append(sc.instances, r.instance)
+	}
+	index := 0
+	for index < len(records) {
+		transparent := records[index].transparent
+		mesh := records[index].mesh
+		first := uint32(index)
+		for index < len(records) && records[index].transparent == transparent && records[index].mesh == mesh {
+			index++
+		}
+		group := SkinnedDrawGroup{Mesh: mesh, FirstInstance: first, Count: uint32(index) - first}
+		if transparent {
+			sc.blendGroups = append(sc.blendGroups, group)
+		} else {
+			sc.opaqueGroups = append(sc.opaqueGroups, group)
+		}
+	}
+}
+
+// uploadInstances (re)allocates + fills the instance buffer; bumps
+// instancesGen on realloc so consumers rebuild bind groups.
+func (sc *SkinningCompute) uploadInstances(device *wgpu.Device, queue *wgpu.Queue, encoder *wgpu.CommandEncoder) {
+	count := len(sc.instances)
+	if count == 0 {
+		return
+	}
+	if sc.instancesCap < count {
+		if sc.instancesBuffer != nil {
+			sc.instancesBuffer.Release()
+		}
+		buf, err := device.CreateBuffer(&wgpu.BufferDescriptor{
+			Label: "skinned instances",
+			Size:  uint64(count) * uint64(unsafe.Sizeof(SkinnedInstance{})),
+			Usage: wgpu.BufferUsageStorage | wgpu.BufferUsageCopyDst,
+		})
+		if err != nil {
+			return
+		}
+		sc.instancesBuffer = buf
+		sc.instancesCap = count
+		sc.instancesGen++
+	}
+	writeBuffer(device, queue, encoder, sc.instancesBuffer, 0, unsafe.Slice((*byte)(unsafe.Pointer(&sc.instances[0])), count*int(unsafe.Sizeof(SkinnedInstance{}))))
+}
+
 // collectBoneTransforms reads each deduped joint entity's current
 // world transform into the scratch slice (identity when missing).
 func (sc *SkinningCompute) collectBoneTransforms(world *ecs.World) {
@@ -356,8 +496,19 @@ func (sc *SkinningCompute) Prepare(world *ecs.World, device *wgpu.Device, queue 
 		rebuilt = true
 	}
 	if sc.totalJoints == 0 || len(sc.skinData) == 0 {
+		sc.instances = sc.instances[:0]
+		sc.opaqueGroups = sc.opaqueGroups[:0]
+		sc.blendGroups = sc.blendGroups[:0]
 		return false
 	}
+
+	// Rebuild the per-instance batch + draw groups every frame
+	// (materials / transparency can change) and upload it; the
+	// render + shadow passes read it regardless of whether the
+	// pose dispatch is skipped below.
+	sc.buildInstances(world)
+	sc.uploadInstances(device, queue, encoder)
+
 	sc.collectBoneTransforms(world)
 
 	grew := sc.ensureBuffers(device)

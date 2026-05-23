@@ -279,10 +279,7 @@ func meshExecute(s any, context *render.PassContext) error {
 
 	dispatchClusterPasses(state, context)
 
-	if len(state.sortedHandles) == 0 {
-		return nil
-	}
-
+	hasGeometry := len(state.sortedHandles) > 0
 	assets := ecs.MustResource[asset.MeshAssetsResource](context.World).Assets
 
 	colorAttachment, err := context.ColorAttachment("color")
@@ -302,7 +299,7 @@ func meshExecute(s any, context *render.PassContext) error {
 		return err
 	}
 
-	if meshRunPrepass && state.depthPrepass != nil {
+	if hasGeometry && meshRunPrepass && state.depthPrepass != nil {
 		prepassDepth := depthAttachment
 		prepass := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 			Label:                  "mesh depth prepass",
@@ -327,27 +324,31 @@ func meshExecute(s any, context *render.PassContext) error {
 		depthAttachment.DepthLoadOp = wgpu.LoadOpLoad
 	}
 
+	// The opaque pass opens unconditionally: as the first geometry
+	// pass it owns the color/depth/entity_id/view_normals clears, so
+	// it must run even with no static meshes to clear those targets
+	// for the skinned + instanced passes that load them afterwards.
 	pass := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		Label:                  "mesh",
 		ColorAttachments:       []wgpu.RenderPassColorAttachment{colorAttachment, entityIdAttachment, viewNormalsAttachment},
 		DepthStencilAttachment: &depthAttachment,
 	})
-	pass.SetPipeline(state.pipeline)
-	pass.SetBindGroup(0, state.viewProjBindGroup, nil)
-	pass.SetBindGroup(1, state.globalBindGroup, nil)
-	pass.SetBindGroup(3, state.iblBindGroup, nil)
-
-	for _, handle := range state.sortedHandles {
-		bucket := state.perHandle[handle]
-		entry, ok := assets.Lookup(handle)
-		if !ok {
-			continue
+	if hasGeometry {
+		pass.SetPipeline(state.pipeline)
+		pass.SetBindGroup(0, state.viewProjBindGroup, nil)
+		pass.SetBindGroup(1, state.globalBindGroup, nil)
+		pass.SetBindGroup(3, state.iblBindGroup, nil)
+		for _, handle := range state.sortedHandles {
+			bucket := state.perHandle[handle]
+			entry, ok := assets.Lookup(handle)
+			if !ok {
+				continue
+			}
+			pass.SetBindGroup(2, bucket.bindGroup, nil)
+			pass.SetVertexBuffer(0, entry.Vertices, 0, wgpu.WholeSize)
+			drawHandle(pass, bucket, entry.VertexCount, uint32(len(bucket.slotEntity)))
 		}
-		pass.SetBindGroup(2, bucket.bindGroup, nil)
-		pass.SetVertexBuffer(0, entry.Vertices, 0, wgpu.WholeSize)
-		drawHandle(pass, bucket, entry.VertexCount, uint32(len(bucket.slotEntity)))
 	}
-
 	pass.End()
 	pass.Release()
 	return nil

@@ -23,29 +23,6 @@ type skinnedUniforms struct {
 	AmbientColor   mgl32.Vec4
 }
 
-type skinnedMaterial struct {
-	BaseColor [4]float32
-	BaseLayer uint32
-	AlphaMode uint32
-	Pad1      uint32
-	Pad2      uint32
-}
-
-type skinnedPerEntity struct {
-	EntityID    uint32
-	JointOffset uint32
-	Pad0        uint32
-	Pad1        uint32
-}
-
-type skinnedHandleBuffers struct {
-	perEntityBuffer *wgpu.Buffer
-	materialBuffer  *wgpu.Buffer
-	bindGroup       *wgpu.BindGroup
-	jointGen        uint64
-	jointBuffer     *wgpu.Buffer
-}
-
 type skinnedMeshPassState struct {
 	pipeline       *wgpu.RenderPipeline
 	viewProjLayout *wgpu.BindGroupLayout
@@ -57,10 +34,15 @@ type skinnedMeshPassState struct {
 	globalGroup    *wgpu.BindGroup
 	aspectFn       func() float32
 
-	// perEntity caches the per-handle bind group keyed by the
-	// rendered skinned entity. A skinned mesh has one Skin per
-	// entity (no instancing yet), so the cache is entity-scoped.
-	perEntity map[ecs.Entity]*skinnedHandleBuffers
+	// One shared handle bind group binds the joint-matrix buffer +
+	// the per-instance data buffer; every same-mesh draw group
+	// indexes its slice by instance_index. Rebuilt when either
+	// backing buffer reallocates.
+	handleBindGroup *wgpu.BindGroup
+	jointGen        uint64
+	instancesGen    uint64
+	jointBuffer     *wgpu.Buffer
+	instancesBuffer *wgpu.Buffer
 }
 
 // AddSkinnedMeshPass registers the skinned mesh render pass. It
@@ -143,8 +125,7 @@ func newSkinnedMeshState(device *wgpu.Device, aspect func() float32) (*skinnedMe
 		Label: "skinned_mesh handle layout",
 		Entries: []wgpu.BindGroupLayoutEntry{
 			{Binding: 0, Visibility: wgpu.ShaderStageVertex, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage}},
-			{Binding: 1, Visibility: wgpu.ShaderStageVertex, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage}},
-			{Binding: 2, Visibility: wgpu.ShaderStageFragment, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeUniform}},
+			{Binding: 1, Visibility: wgpu.ShaderStageVertex | wgpu.ShaderStageFragment, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage}},
 		},
 	})
 	if err != nil {
@@ -252,8 +233,44 @@ func newSkinnedMeshState(device *wgpu.Device, aspect func() float32) (*skinnedMe
 		viewProjGroup:  viewProjGroup,
 		uniformBuffer:  uniformBuffer,
 		aspectFn:       aspect,
-		perEntity:      make(map[ecs.Entity]*skinnedHandleBuffers),
 	}, nil
+}
+
+// skinnedHandleBindGroup returns a cached bind group binding the
+// shared joint-matrix + per-instance buffers, rebuilding it when
+// either reallocates. Shared by the opaque skinned + (mirrored in)
+// shadow + OIT skinned paths.
+func ensureSkinnedHandleBindGroup(device *wgpu.Device, layout *wgpu.BindGroupLayout, cached **wgpu.BindGroup, jointGen, instGen *uint64, jointBuf, instBuf **wgpu.Buffer, sc *SkinningCompute) *wgpu.BindGroup {
+	joint := sc.JointMatrixBuffer()
+	instances := sc.InstancesBuffer()
+	if joint == nil || instances == nil {
+		return nil
+	}
+	jg := sc.Generation()
+	ig := sc.InstancesGeneration()
+	if *cached != nil && (*jointGen != jg || *instGen != ig || *jointBuf != joint || *instBuf != instances) {
+		(*cached).Release()
+		*cached = nil
+	}
+	if *cached == nil {
+		bg, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+			Label:  "skinned handle bg",
+			Layout: layout,
+			Entries: []wgpu.BindGroupEntry{
+				{Binding: 0, Buffer: joint, Offset: 0, Size: wgpu.WholeSize},
+				{Binding: 1, Buffer: instances, Offset: 0, Size: wgpu.WholeSize},
+			},
+		})
+		if err != nil {
+			return nil
+		}
+		*cached = bg
+		*jointGen = jg
+		*instGen = ig
+		*jointBuf = joint
+		*instBuf = instances
+	}
+	return *cached
 }
 
 func skinnedMeshPrepare(s any, context *render.PassContext) error {
@@ -294,80 +311,22 @@ func skinnedMeshPrepare(s any, context *render.PassContext) error {
 	if !ok || skinningRes == nil || skinningRes.Compute == nil {
 		return nil
 	}
-	skinning := skinningRes.Compute
-	jointBuffer := skinning.JointMatrixBuffer()
-	if jointBuffer == nil {
-		return nil
-	}
-	generation := skinning.Generation()
-
-	skinnedMask := ecs.MustMaskOf[asset.SkinnedMesh](context.World) |
-		ecs.MustMaskOf[transform.GlobalTransform](context.World)
-	context.World.ForEach(skinnedMask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {
-		skinned, _ := ecs.Get[asset.SkinnedMesh](context.World, entity)
-		if skinned == nil || skinned.Skin == nil {
-			return
-		}
-		buffers := state.perEntity[entity]
-		if buffers == nil {
-			buffers = &skinnedHandleBuffers{}
-			state.perEntity[entity] = buffers
-		}
-		if err := ensureSkinnedBuffers(buffers, context.Device); err != nil {
-			delete(state.perEntity, entity)
-			return
-		}
-		per := skinnedPerEntity{
-			EntityID:    entity.ID,
-			JointOffset: skinning.JointOffset(entity),
-		}
-		writeBuffer(context.Device, context.Queue, context.Encoder, buffers.perEntityBuffer, 0, bytesOf(&per))
-
-		matData := skinnedMaterial{
-			BaseColor: [4]float32{1, 1, 1, 1},
-			BaseLayer: 0xFFFFFFFF,
-		}
-		if material, ok := ecs.Get[asset.Material](context.World, entity); ok && material != nil {
-			matData.BaseColor = material.BaseColor
-			matData.BaseLayer = material.BaseColorLayer
-			matData.AlphaMode = uint32(material.ToGPU().AlphaMode)
-		}
-		writeBuffer(context.Device, context.Queue, context.Encoder, buffers.materialBuffer, 0, bytesOf(&matData))
-
-		if buffers.bindGroup != nil && (buffers.jointGen != generation || buffers.jointBuffer != jointBuffer) {
-			buffers.bindGroup.Release()
-			buffers.bindGroup = nil
-		}
-		if buffers.bindGroup == nil {
-			bg, err := context.Device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-				Label:  "skinned_mesh handle bg",
-				Layout: state.handleLayout,
-				Entries: []wgpu.BindGroupEntry{
-					{Binding: 0, Buffer: jointBuffer, Offset: 0, Size: wgpu.WholeSize},
-					{Binding: 1, Buffer: buffers.perEntityBuffer, Offset: 0, Size: wgpu.WholeSize},
-					{Binding: 2, Buffer: buffers.materialBuffer, Offset: 0, Size: uint64(unsafe.Sizeof(skinnedMaterial{}))},
-				},
-			})
-			if err != nil {
-				return
-			}
-			buffers.bindGroup = bg
-			buffers.jointGen = generation
-			buffers.jointBuffer = jointBuffer
-		}
-	})
+	ensureSkinnedHandleBindGroup(context.Device, state.handleLayout, &state.handleBindGroup,
+		&state.jointGen, &state.instancesGen, &state.jointBuffer, &state.instancesBuffer, skinningRes.Compute)
 	return nil
 }
 
 func skinnedMeshExecute(s any, context *render.PassContext) error {
 	state := s.(*skinnedMeshPassState)
-	skinnedMask := ecs.MustMaskOf[asset.SkinnedMesh](context.World) |
-		ecs.MustMaskOf[transform.GlobalTransform](context.World)
-	hasAny := false
-	context.World.ForEach(skinnedMask, 0, func(_ ecs.Entity, _ *ecs.Archetype, _ int) {
-		hasAny = true
-	})
-	if !hasAny {
+	if state.handleBindGroup == nil {
+		return nil
+	}
+	skinningRes, ok := ecs.Resource[SkinningComputeResource](context.World)
+	if !ok || skinningRes == nil || skinningRes.Compute == nil {
+		return nil
+	}
+	groups := skinningRes.Compute.OpaqueGroups()
+	if len(groups) == 0 {
 		return nil
 	}
 
@@ -398,24 +357,16 @@ func skinnedMeshExecute(s any, context *render.PassContext) error {
 	passEnc.SetPipeline(state.pipeline)
 	passEnc.SetBindGroup(0, state.viewProjGroup, nil)
 	passEnc.SetBindGroup(1, state.globalGroup, nil)
+	passEnc.SetBindGroup(2, state.handleBindGroup, nil)
 
-	context.World.ForEach(skinnedMask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {
-		skinned, _ := ecs.Get[asset.SkinnedMesh](context.World, entity)
-		if skinned == nil {
-			return
-		}
-		buffers := state.perEntity[entity]
-		if buffers == nil || buffers.bindGroup == nil {
-			return
-		}
-		entry, ok := assets.Lookup(skinned.Mesh)
+	for _, group := range groups {
+		entry, ok := assets.Lookup(group.Mesh)
 		if !ok || entry == nil {
-			return
+			continue
 		}
-		passEnc.SetBindGroup(2, buffers.bindGroup, nil)
 		passEnc.SetVertexBuffer(0, entry.Vertices, 0, wgpu.WholeSize)
-		passEnc.Draw(entry.VertexCount, 1, 0, 0)
-	})
+		passEnc.Draw(entry.VertexCount, group.Count, 0, group.FirstInstance)
+	}
 	passEnc.End()
 	passEnc.Release()
 	return nil
@@ -423,17 +374,8 @@ func skinnedMeshExecute(s any, context *render.PassContext) error {
 
 func skinnedMeshRelease(s any) {
 	state := s.(*skinnedMeshPassState)
-	for entity, buffers := range state.perEntity {
-		if buffers.bindGroup != nil {
-			buffers.bindGroup.Release()
-		}
-		if buffers.perEntityBuffer != nil {
-			buffers.perEntityBuffer.Release()
-		}
-		if buffers.materialBuffer != nil {
-			buffers.materialBuffer.Release()
-		}
-		delete(state.perEntity, entity)
+	if state.handleBindGroup != nil {
+		state.handleBindGroup.Release()
 	}
 	if state.globalGroup != nil {
 		state.globalGroup.Release()
@@ -459,34 +401,6 @@ func skinnedMeshRelease(s any) {
 	if state.viewProjLayout != nil {
 		state.viewProjLayout.Release()
 	}
-}
-
-func ensureSkinnedBuffers(buffers *skinnedHandleBuffers, device *wgpu.Device) error {
-	if buffers.materialBuffer == nil {
-		buf, err := device.CreateBuffer(&wgpu.BufferDescriptor{
-			Label: "skinned_mesh material buffer",
-			Size:  uint64(unsafe.Sizeof(skinnedMaterial{})),
-			Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
-		})
-		if err != nil {
-			return err
-		}
-		buffers.materialBuffer = buf
-		buffers.bindGroup = nil
-	}
-	if buffers.perEntityBuffer == nil {
-		buf, err := device.CreateBuffer(&wgpu.BufferDescriptor{
-			Label: "skinned_mesh per-entity buffer",
-			Size:  uint64(unsafe.Sizeof(skinnedPerEntity{})),
-			Usage: wgpu.BufferUsageStorage | wgpu.BufferUsageCopyDst,
-		})
-		if err != nil {
-			return err
-		}
-		buffers.perEntityBuffer = buf
-		buffers.bindGroup = nil
-	}
-	return nil
 }
 
 // applyDirectionalToSkinned folds the first directional light's
