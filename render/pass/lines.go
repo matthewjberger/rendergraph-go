@@ -30,15 +30,27 @@ type LineSegment struct {
 // lines pass consumes the slice each frame and resets it for the
 // next.
 type Lines struct {
-	Segments []LineSegment
+	Segments        []LineSegment
+	OverlaySegments []LineSegment
 }
 
 type LinesResource struct{ Lines *Lines }
 
 // AddSegment appends a world-space line from start to end with the
-// given RGBA color.
+// given RGBA color, drawn with regular depth testing.
 func (l *Lines) AddSegment(start, end [3]float32, color [4]float32) {
 	l.Segments = append(l.Segments, LineSegment{
+		Start: [4]float32{start[0], start[1], start[2], 1},
+		End:   [4]float32{end[0], end[1], end[2], 1},
+		Color: color,
+	})
+}
+
+// AddOverlaySegment appends a segment that always draws on top of
+// the scene regardless of depth, for editor overlays like the
+// skeleton visualization where joints sit inside geometry.
+func (l *Lines) AddOverlaySegment(start, end [3]float32, color [4]float32) {
+	l.OverlaySegments = append(l.OverlaySegments, LineSegment{
 		Start: [4]float32{start[0], start[1], start[2], 1},
 		End:   [4]float32{end[0], end[1], end[2], 1},
 		Color: color,
@@ -67,12 +79,17 @@ const lineSegmentBytes = uint64(48)
 
 type linesPassState struct {
 	pipeline        *wgpu.RenderPipeline
+	overlayPipeline *wgpu.RenderPipeline
 	bindGroupLayout *wgpu.BindGroupLayout
 	viewProjBuffer  *wgpu.Buffer
 	instanceBuffer  *wgpu.Buffer
+	overlayBuffer   *wgpu.Buffer
 	bindGroup       *wgpu.BindGroup
+	overlayBindGrp  *wgpu.BindGroup
 	capacity        uint32
+	overlayCapacity uint32
 	count           uint32
+	overlayCount    uint32
 	aspectFn        func() float32
 }
 
@@ -187,6 +204,58 @@ func NewLinesPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect 
 	}
 	state.pipeline = pipeline
 
+	overlayPipeline, err := device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
+		Label:  "lines overlay pipeline",
+		Layout: pipelineLayout,
+		Vertex: wgpu.VertexState{Module: shader, EntryPoint: "vertex_main"},
+		Primitive: wgpu.PrimitiveState{
+			Topology: wgpu.PrimitiveTopologyLineList,
+			CullMode: wgpu.CullModeNone,
+		},
+		DepthStencil: &wgpu.DepthStencilState{
+			Format:            render.DepthFormat,
+			DepthWriteEnabled: false,
+			DepthCompare:      wgpu.CompareFunctionAlways,
+			StencilFront: wgpu.StencilFaceState{
+				Compare:     wgpu.CompareFunctionAlways,
+				FailOp:      wgpu.StencilOperationKeep,
+				DepthFailOp: wgpu.StencilOperationKeep,
+				PassOp:      wgpu.StencilOperationKeep,
+			},
+			StencilBack: wgpu.StencilFaceState{
+				Compare:     wgpu.CompareFunctionAlways,
+				FailOp:      wgpu.StencilOperationKeep,
+				DepthFailOp: wgpu.StencilOperationKeep,
+				PassOp:      wgpu.StencilOperationKeep,
+			},
+		},
+		Multisample: wgpu.MultisampleState{Count: 1, Mask: 0xFFFFFFFF},
+		Fragment: &wgpu.FragmentState{
+			Module:     shader,
+			EntryPoint: "fragment_main",
+			Targets: []wgpu.ColorTargetState{{
+				Format:    surfaceFormat,
+				WriteMask: wgpu.ColorWriteMaskAll,
+				Blend: &wgpu.BlendState{
+					Color: wgpu.BlendComponent{
+						SrcFactor: wgpu.BlendFactorSrcAlpha,
+						DstFactor: wgpu.BlendFactorOneMinusSrcAlpha,
+						Operation: wgpu.BlendOperationAdd,
+					},
+					Alpha: wgpu.BlendComponent{
+						SrcFactor: wgpu.BlendFactorOne,
+						DstFactor: wgpu.BlendFactorOneMinusSrcAlpha,
+						Operation: wgpu.BlendOperationAdd,
+					},
+				},
+			}},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("lines pass: overlay pipeline: %w", err)
+	}
+	state.overlayPipeline = overlayPipeline
+
 	return &render.Pass{
 		Name:    "lines",
 		Writes:  []string{"color", "depth"},
@@ -200,12 +269,13 @@ func NewLinesPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect 
 func linesPrepare(s any, context *render.PassContext) error {
 	state := s.(*linesPassState)
 	state.count = 0
+	state.overlayCount = 0
 
 	if !ecs.HasResource[LinesResource](context.World) {
 		return nil
 	}
 	lines := ecs.MustResource[LinesResource](context.World).Lines
-	if lines == nil || len(lines.Segments) == 0 {
+	if lines == nil || (len(lines.Segments) == 0 && len(lines.OverlaySegments) == 0) {
 		return nil
 	}
 
@@ -213,17 +283,26 @@ func linesPrepare(s any, context *render.PassContext) error {
 	viewProj := render.CameraViewProjection(camera, state.aspectFn())
 	writeBuffer(context.Device, context.Queue, context.Encoder, state.viewProjBuffer, 0, bytesOf(&viewProj))
 
-	state.count = uint32(len(lines.Segments))
-	if err := ensureLinesCapacity(state, context.Device, state.count); err != nil {
-		return err
+	if len(lines.Segments) > 0 {
+		state.count = uint32(len(lines.Segments))
+		if err := ensureLinesCapacity(state, context.Device, state.count); err != nil {
+			return err
+		}
+		writeBuffer(context.Device, context.Queue, context.Encoder, state.instanceBuffer, 0, bytesOfN(&lines.Segments[0], uint64(state.count)*lineSegmentBytes))
 	}
-	writeBuffer(context.Device, context.Queue, context.Encoder, state.instanceBuffer, 0, bytesOfN(&lines.Segments[0], uint64(state.count)*lineSegmentBytes))
+	if len(lines.OverlaySegments) > 0 {
+		state.overlayCount = uint32(len(lines.OverlaySegments))
+		if err := ensureLinesOverlayCapacity(state, context.Device, state.overlayCount); err != nil {
+			return err
+		}
+		writeBuffer(context.Device, context.Queue, context.Encoder, state.overlayBuffer, 0, bytesOfN(&lines.OverlaySegments[0], uint64(state.overlayCount)*lineSegmentBytes))
+	}
 	return nil
 }
 
 func linesExecute(s any, context *render.PassContext) error {
 	state := s.(*linesPassState)
-	if state.count == 0 {
+	if state.count == 0 && state.overlayCount == 0 {
 		clearLines(context.World)
 		return nil
 	}
@@ -240,9 +319,16 @@ func linesExecute(s any, context *render.PassContext) error {
 		ColorAttachments:       []wgpu.RenderPassColorAttachment{color},
 		DepthStencilAttachment: &depth,
 	})
-	pass.SetPipeline(state.pipeline)
-	pass.SetBindGroup(0, state.bindGroup, nil)
-	pass.Draw(2, state.count, 0, 0)
+	if state.count > 0 {
+		pass.SetPipeline(state.pipeline)
+		pass.SetBindGroup(0, state.bindGroup, nil)
+		pass.Draw(2, state.count, 0, 0)
+	}
+	if state.overlayCount > 0 {
+		pass.SetPipeline(state.overlayPipeline)
+		pass.SetBindGroup(0, state.overlayBindGrp, nil)
+		pass.Draw(2, state.overlayCount, 0, 0)
+	}
 	pass.End()
 	pass.Release()
 	clearLines(context.World)
@@ -258,6 +344,7 @@ func clearLines(world *ecs.World) {
 		return
 	}
 	lines.Segments = lines.Segments[:0]
+	lines.OverlaySegments = lines.OverlaySegments[:0]
 }
 
 func linesRelease(s any) {
@@ -265,14 +352,23 @@ func linesRelease(s any) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}
+	if state.overlayBindGrp != nil {
+		state.overlayBindGrp.Release()
+	}
 	if state.instanceBuffer != nil {
 		state.instanceBuffer.Release()
+	}
+	if state.overlayBuffer != nil {
+		state.overlayBuffer.Release()
 	}
 	if state.viewProjBuffer != nil {
 		state.viewProjBuffer.Release()
 	}
 	if state.pipeline != nil {
 		state.pipeline.Release()
+	}
+	if state.overlayPipeline != nil {
+		state.overlayPipeline.Release()
 	}
 	if state.bindGroupLayout != nil {
 		state.bindGroupLayout.Release()
@@ -319,6 +415,49 @@ func ensureLinesCapacity(state *linesPassState, device *wgpu.Device, required ui
 	state.instanceBuffer = buffer
 	state.bindGroup = bindGroup
 	state.capacity = newCapacity
+	return nil
+}
+
+func ensureLinesOverlayCapacity(state *linesPassState, device *wgpu.Device, required uint32) error {
+	if state.overlayCapacity >= required && state.overlayBuffer != nil {
+		return nil
+	}
+	newCapacity := state.overlayCapacity
+	if newCapacity == 0 {
+		newCapacity = linesMinCapacity
+	}
+	for newCapacity < required {
+		newCapacity *= 2
+	}
+	buffer, err := device.CreateBuffer(&wgpu.BufferDescriptor{
+		Label: "lines overlay instance buffer",
+		Size:  uint64(newCapacity) * lineSegmentBytes,
+		Usage: wgpu.BufferUsageStorage | wgpu.BufferUsageCopyDst,
+	})
+	if err != nil {
+		return fmt.Errorf("lines pass: overlay instance buffer: %w", err)
+	}
+	bindGroup, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Label:  "lines overlay bind group",
+		Layout: state.bindGroupLayout,
+		Entries: []wgpu.BindGroupEntry{
+			{Binding: 0, Buffer: state.viewProjBuffer, Offset: 0, Size: uint64(unsafe.Sizeof(mgl32.Mat4{}))},
+			{Binding: 1, Buffer: buffer, Offset: 0, Size: wgpu.WholeSize},
+		},
+	})
+	if err != nil {
+		buffer.Release()
+		return fmt.Errorf("lines pass: overlay bind group: %w", err)
+	}
+	if state.overlayBindGrp != nil {
+		state.overlayBindGrp.Release()
+	}
+	if state.overlayBuffer != nil {
+		state.overlayBuffer.Release()
+	}
+	state.overlayBuffer = buffer
+	state.overlayBindGrp = bindGroup
+	state.overlayCapacity = newCapacity
 	return nil
 }
 

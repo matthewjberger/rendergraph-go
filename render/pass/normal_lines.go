@@ -60,8 +60,6 @@ func UpdateNormalLines(world *ecs.World) {
 			return
 		}
 		m := global.Matrix
-		// Upper-3x3 doubles as the normal matrix for uniform scale.
-		// Read once here; vertices then transform in-loop.
 		for i := range vertices {
 			v := &vertices[i]
 			worldPos := m.Mul4x1(mgl32.Vec4{v.Position[0], v.Position[1], v.Position[2], 1})
@@ -76,6 +74,59 @@ func UpdateNormalLines(world *ecs.World) {
 				start[0] + worldNormal.X()*length,
 				start[1] + worldNormal.Y()*length,
 				start[2] + worldNormal.Z()*length,
+			}
+			lines.AddSegment(start, end, color)
+		}
+	})
+
+	skinnedAssetsRes, hasSkinnedAssets := ecs.Resource[asset.SkinnedMeshAssetsResource](world)
+	if !hasSkinnedAssets || skinnedAssetsRes == nil || skinnedAssetsRes.Assets == nil {
+		return
+	}
+	skinnedAssets := skinnedAssetsRes.Assets
+	skinnedMask := ecs.MustMaskOf[asset.SkinnedMesh](world)
+	world.ForEach(skinnedMask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {
+		skinned, _ := ecs.Get[asset.SkinnedMesh](world, entity)
+		if skinned == nil || skinned.Skin == nil || len(skinned.Skin.JointMatrices) == 0 {
+			return
+		}
+		entry, ok := skinnedAssets.Lookup(skinned.Mesh)
+		if !ok || entry == nil || len(entry.CpuVertices) == 0 {
+			return
+		}
+		joints := skinned.Skin.JointMatrices
+		for i := range entry.CpuVertices {
+			v := &entry.CpuVertices[i]
+			var pos mgl32.Vec3
+			var normal mgl32.Vec3
+			for k := 0; k < 4; k++ {
+				w := v.JointWeights[k]
+				if w <= 0 {
+					continue
+				}
+				idx := int(v.JointIndices[k])
+				if idx < 0 || idx >= len(joints) {
+					continue
+				}
+				m := joints[idx]
+				p := m.Mul4x1(mgl32.Vec4{v.Position[0], v.Position[1], v.Position[2], 1})
+				pos = pos.Add(mgl32.Vec3{p.X() * w, p.Y() * w, p.Z() * w})
+				n := mgl32.Vec3{
+					m[0]*v.Normal[0] + m[4]*v.Normal[1] + m[8]*v.Normal[2],
+					m[1]*v.Normal[0] + m[5]*v.Normal[1] + m[9]*v.Normal[2],
+					m[2]*v.Normal[0] + m[6]*v.Normal[1] + m[10]*v.Normal[2],
+				}
+				normal = normal.Add(n.Mul(w))
+			}
+			if normal.Len() < 1e-6 {
+				continue
+			}
+			normal = normal.Normalize()
+			start := [3]float32{pos.X(), pos.Y(), pos.Z()}
+			end := [3]float32{
+				start[0] + normal.X()*length,
+				start[1] + normal.Y()*length,
+				start[2] + normal.Z()*length,
 			}
 			lines.AddSegment(start, end, color)
 		}

@@ -70,24 +70,24 @@ func UpdateSkeletonLines(world *ecs.World) {
 				continue
 			}
 			parentPos := [3]float32{parentGlobal.Matrix[12], parentGlobal.Matrix[13], parentGlobal.Matrix[14]}
-			lines.AddSegment(parentPos, pos, boneColor)
+			lines.AddOverlaySegment(parentPos, pos, boneColor)
 		}
 	})
 }
 
 func pushSkeletonJointCross(lines *Lines, position [3]float32, size float32, color [4]float32) {
 	half := size * 0.5
-	lines.AddSegment(
+	lines.AddOverlaySegment(
 		[3]float32{position[0] - half, position[1], position[2]},
 		[3]float32{position[0] + half, position[1], position[2]},
 		color,
 	)
-	lines.AddSegment(
+	lines.AddOverlaySegment(
 		[3]float32{position[0], position[1] - half, position[2]},
 		[3]float32{position[0], position[1] + half, position[2]},
 		color,
 	)
-	lines.AddSegment(
+	lines.AddOverlaySegment(
 		[3]float32{position[0], position[1], position[2] - half},
 		[3]float32{position[0], position[1], position[2] + half},
 		color,

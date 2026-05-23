@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
@@ -537,8 +538,17 @@ func decomposeMatrix(matrix [16]float64) (translation [3]float32, rotation [4]fl
 		scale[2] = 1
 	}
 
+	// Detect mirror (negative determinant) and flip one axis so
+	// the residual rotation has a positive determinant. Without
+	// this fix Mat4ToQuat on a left-handed basis returns garbage.
+	det := col0.Cross(col1).Dot(col2)
+	if det < 0 {
+		col0 = col0.Mul(-1)
+		scale[0] = -scale[0]
+	}
+
 	rot := mgl32.Mat4{
-		col0[0] / scale[0], col0[1] / scale[0], col0[2] / scale[0], 0,
+		col0[0] / mgl32.Abs(scale[0]), col0[1] / mgl32.Abs(scale[0]), col0[2] / mgl32.Abs(scale[0]), 0,
 		col1[0] / scale[1], col1[1] / scale[1], col1[2] / scale[1], 0,
 		col2[0] / scale[2], col2[1] / scale[2], col2[2] / scale[2], 0,
 		0, 0, 0, 1,
@@ -557,6 +567,44 @@ func childIndicesOf(node *gltf.Node) []int {
 		out[i] = int(c)
 	}
 	return out
+}
+
+// readEmissiveStrengthExt parses the KHR_materials_emissive_strength
+// payload off a glTF material's extensions map. Returns 1.0 when
+// the extension is absent or malformed.
+func readEmissiveStrengthExt(ext gltf.Extensions) float32 {
+	if ext == nil {
+		return 1.0
+	}
+	raw, ok := ext["KHR_materials_emissive_strength"]
+	if !ok {
+		return 1.0
+	}
+	type payload struct {
+		EmissiveStrength float64 `json:"emissiveStrength"`
+	}
+	var decoded payload
+	switch v := raw.(type) {
+	case json.RawMessage:
+		if err := json.Unmarshal(v, &decoded); err != nil {
+			return 1.0
+		}
+	case []byte:
+		if err := json.Unmarshal(v, &decoded); err != nil {
+			return 1.0
+		}
+	case map[string]any:
+		if s, ok := v["emissiveStrength"].(float64); ok {
+			return float32(s)
+		}
+		return 1.0
+	default:
+		return 1.0
+	}
+	if decoded.EmissiveStrength <= 0 {
+		return 1.0
+	}
+	return float32(decoded.EmissiveStrength)
 }
 
 func classifyTextures(doc *gltf.Document) []TextureColorSpace {
@@ -702,6 +750,7 @@ func buildMaterial(src *gltf.Material, textureLayers []uint32) Material {
 	default:
 		out.AlphaMode = AlphaModeOpaque
 	}
+	out.EmissiveStrength = readEmissiveStrengthExt(src.Extensions)
 	out.AlphaCutoff = float32(src.AlphaCutoffOrDefault())
 	out.DoubleSided = src.DoubleSided
 	return out
