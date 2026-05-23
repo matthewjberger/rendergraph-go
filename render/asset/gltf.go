@@ -135,6 +135,11 @@ type SceneNode struct {
 	SkinnedMesh       SkinnedMeshHandle
 	HasSkinnedMesh    bool
 	ChildSkinnedPrims []SceneNodeSkinnedPrimitive
+	// Instances holds per-instance local transforms when the node
+	// carries EXT_mesh_gpu_instancing; nil otherwise. When present
+	// the node spawns an InstancedMesh of Mesh rather than a
+	// RenderMesh.
+	Instances []mgl32.Mat4
 }
 
 // SceneNodeSkinnedPrimitive is one rigged primitive of a
@@ -305,6 +310,7 @@ func LoadGltfReaderOpts(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAsse
 			out.CameraIndex = int(*node.Camera)
 		}
 		out.LightIndex = readNodeLightIndex(node.Extensions)
+		out.Instances = readNodeInstances(doc, node)
 		if node.Mesh != nil {
 			prims := meshPrimitives[*node.Mesh]
 			// Pre-classify primitives so multi-primitive nodes
@@ -383,6 +389,7 @@ func SpawnLoadedScene(world *ecs.World, scene *LoadedScene, device *wgpu.Device)
 	parentMask := ecs.MustMaskOf[transform.Parent](world)
 	groupRootMask := ecs.MustMaskOf[transform.GroupRoot](world)
 	meshMask := ecs.MustMaskOf[RenderMesh](world)
+	instancedMeshMask := ecs.MustMaskOf[InstancedMesh](world)
 	skinnedMeshMask := ecs.MustMaskOf[SkinnedMesh](world)
 	materialMask := ecs.MustMaskOf[Material](world)
 
@@ -419,7 +426,11 @@ func SpawnLoadedScene(world *ecs.World, scene *LoadedScene, device *wgpu.Device)
 			Scale: transform.Vec3{node.Scale[0], node.Scale[1], node.Scale[2]},
 		}
 		ecs.Set(world, entity, local)
-		if node.HasMesh {
+		if node.HasMesh && len(node.Instances) > 0 {
+			world.AddComponents(entity, instancedMeshMask|materialMask)
+			ecs.Set(world, entity, InstancedMesh{Mesh: node.Mesh, Instances: node.Instances})
+			ecs.Set(world, entity, node.Material)
+		} else if node.HasMesh {
 			world.AddComponents(entity, meshMask|materialMask)
 			ecs.Set(world, entity, RenderMesh{Mesh: node.Mesh})
 			ecs.Set(world, entity, node.Material)
@@ -775,6 +786,82 @@ func readNodeLightIndex(ext gltf.Extensions) int {
 		return -1
 	}
 	return decoded.Light
+}
+
+// readNodeInstances peels EXT_mesh_gpu_instancing off a node and
+// builds one local TRS matrix per instance from its TRANSLATION /
+// ROTATION / SCALE accessors. Returns nil when the extension is
+// absent or carries no instances. Missing attributes default to
+// identity (zero translation, identity rotation, unit scale).
+func readNodeInstances(doc *gltf.Document, node *gltf.Node) []mgl32.Mat4 {
+	if node == nil || node.Extensions == nil {
+		return nil
+	}
+	raw, ok := node.Extensions["EXT_mesh_gpu_instancing"]
+	if !ok {
+		return nil
+	}
+	body, err := jsonRawFromExt(raw)
+	if err != nil {
+		return nil
+	}
+	var decoded struct {
+		Attributes struct {
+			Translation *uint32 `json:"TRANSLATION"`
+			Rotation    *uint32 `json:"ROTATION"`
+			Scale       *uint32 `json:"SCALE"`
+		} `json:"attributes"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return nil
+	}
+
+	var translations [][3]float32
+	var rotations [][4]float32
+	var scales [][3]float32
+	count := 0
+	if idx := decoded.Attributes.Translation; idx != nil && int(*idx) < len(doc.Accessors) {
+		if t, err := modeler.ReadPosition(doc, doc.Accessors[*idx], nil); err == nil {
+			translations = t
+			count = max(count, len(t))
+		}
+	}
+	if idx := decoded.Attributes.Rotation; idx != nil && int(*idx) < len(doc.Accessors) {
+		if r, err := modeler.ReadTangent(doc, doc.Accessors[*idx], nil); err == nil {
+			rotations = r
+			count = max(count, len(r))
+		}
+	}
+	if idx := decoded.Attributes.Scale; idx != nil && int(*idx) < len(doc.Accessors) {
+		if sc, err := modeler.ReadPosition(doc, doc.Accessors[*idx], nil); err == nil {
+			scales = sc
+			count = max(count, len(sc))
+		}
+	}
+	if count == 0 {
+		return nil
+	}
+
+	out := make([]mgl32.Mat4, count)
+	for index := 0; index < count; index++ {
+		translation := mgl32.Vec3{0, 0, 0}
+		if index < len(translations) {
+			translation = translations[index]
+		}
+		scale := mgl32.Vec3{1, 1, 1}
+		if index < len(scales) {
+			scale = scales[index]
+		}
+		rotation := mgl32.QuatIdent()
+		if index < len(rotations) {
+			q := rotations[index]
+			rotation = mgl32.Quat{W: q[3], V: mgl32.Vec3{q[0], q[1], q[2]}}
+		}
+		out[index] = mgl32.Translate3D(translation[0], translation[1], translation[2]).
+			Mul4(rotation.Mat4()).
+			Mul4(mgl32.Scale3D(scale[0], scale[1], scale[2]))
+	}
+	return out
 }
 
 // jsonRawFromExt normalizes the three shapes an extension value

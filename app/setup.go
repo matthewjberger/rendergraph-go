@@ -36,6 +36,7 @@ func NewEngineWorld(renderer *render.Renderer) (*ecs.World, error) {
 	ecs.Register[transform.IgnoreParentScale](engine)
 	ecs.Register[transform.GroupRoot](engine)
 	ecs.Register[asset.RenderMesh](engine)
+	ecs.Register[asset.InstancedMesh](engine)
 	ecs.Register[asset.SkinnedMesh](engine)
 	ecs.Register[asset.Material](engine)
 	ecs.Register[asset.AnimationPlayer](engine)
