@@ -51,10 +51,9 @@ func AddSkinnedMeshOitPass(renderer *render.Renderer) (*render.Pass, error) {
 		Name:    "skinned_mesh_oit",
 		Reads:   []string{"depth"},
 		Writes:  []string{"oit_accum", "oit_reveal", "entity_id"},
-		State:   state,
-		Prepare: skinnedMeshOitPrepare,
-		Execute: skinnedMeshOitExecute,
-		Release: skinnedMeshOitRelease,
+		Prepare: func(c *render.PassContext) error { return skinnedMeshOitPrepare(state, c) },
+		Execute: func(c *render.PassContext) error { return skinnedMeshOitExecute(state, c) },
+		Release: func() { skinnedMeshOitRelease(state) },
 	}
 	if err := renderer.Graph.AddPass(pass, []render.SlotBinding{
 		{Slot: "oit_accum", ResourceID: renderer.OitAccumID},
@@ -239,8 +238,7 @@ func newSkinnedMeshOitState(device *wgpu.Device, aspect func() float32) (*skinne
 	}, nil
 }
 
-func skinnedMeshOitPrepare(s any, context *render.PassContext) error {
-	state := s.(*skinnedMeshOitState)
+func skinnedMeshOitPrepare(state *skinnedMeshOitState, context *render.PassContext) error {
 
 	camera, hasCamera := ecs.Resource[render.Camera](context.World)
 	viewProj := mgl32.Ident4()
@@ -286,8 +284,7 @@ func skinnedMeshOitPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func skinnedMeshOitExecute(s any, context *render.PassContext) error {
-	state := s.(*skinnedMeshOitState)
+func skinnedMeshOitExecute(state *skinnedMeshOitState, context *render.PassContext) error {
 	if state.handleBindGroup == nil {
 		return nil
 	}
@@ -348,8 +345,7 @@ func skinnedMeshOitExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func skinnedMeshOitRelease(s any) {
-	state := s.(*skinnedMeshOitState)
+func skinnedMeshOitRelease(state *skinnedMeshOitState) {
 	if state.handleBindGroup != nil {
 		state.handleBindGroup.Release()
 	}

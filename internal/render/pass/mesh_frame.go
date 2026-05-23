@@ -16,8 +16,7 @@ import (
 	"github.com/matthewjberger/indigo/window"
 )
 
-func meshPrepare(s any, context *render.PassContext) error {
-	state := s.(*meshPassState)
+func meshPrepare(state *meshPassState, context *render.PassContext) error {
 
 	camera := ecs.MustResource[render.Camera](context.World)
 	aspect := state.aspectFn()
@@ -255,8 +254,7 @@ func ensureCullBindings(bucket *handleInstances, device *wgpu.Device, culling *m
 	return nil
 }
 
-func meshExecute(s any, context *render.PassContext) error {
-	state := s.(*meshPassState)
+func meshExecute(state *meshPassState, context *render.PassContext) error {
 
 	dispatchClusterPasses(state, context)
 
@@ -331,8 +329,7 @@ func meshExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func meshRelease(s any) {
-	state := s.(*meshPassState)
+func meshRelease(state *meshPassState) {
 	for _, h := range state.perHandle {
 		releaseHandleInstances(h)
 	}

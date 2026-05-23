@@ -109,13 +109,11 @@ type Pass struct {
 	Reads  []string
 	Writes []string
 
-	State any
+	Prepare func(context *PassContext) error
 
-	Prepare func(state any, context *PassContext) error
+	Execute func(context *PassContext) error
 
-	Execute func(state any, context *PassContext) error
+	InvalidateBindGroups func()
 
-	InvalidateBindGroups func(state any)
-
-	Release func(state any)
+	Release func()
 }

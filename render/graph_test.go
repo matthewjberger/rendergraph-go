@@ -15,7 +15,7 @@ func recordingPass(name string, reads, writes []string, log *[]string) *Pass {
 		Name:   name,
 		Reads:  reads,
 		Writes: writes,
-		Prepare: func(_ any, _ *PassContext) error {
+		Prepare: func(_ *PassContext) error {
 			*log = append(*log, name)
 			return nil
 		},
@@ -140,7 +140,7 @@ func TestInvalidateBindGroupsCalledOnVersionChange(t *testing.T) {
 	pass := &Pass{
 		Name:                 "reader",
 		Reads:                []string{"in"},
-		InvalidateBindGroups: func(_ any) { invalidations++ },
+		InvalidateBindGroups: func() { invalidations++ },
 	}
 	if err := graph.AddPass(pass, []SlotBinding{{Slot: "in", ResourceID: id}}); err != nil {
 		t.Fatal(err)

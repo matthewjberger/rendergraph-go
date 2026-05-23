@@ -76,11 +76,10 @@ func AddSsaoPass(renderer *render.Renderer, aspect func() float32) (*render.Pass
 	pass := &render.Pass{
 		Name:                 "ssao",
 		Reads:                []string{"depth", "view_normals"},
-		State:                state,
-		Prepare:              ssaoPrepare,
-		Execute:              ssaoExecute,
-		InvalidateBindGroups: ssaoInvalidate,
-		Release:              ssaoRelease,
+		Prepare:              func(c *render.PassContext) error { return ssaoPrepare(state, c) },
+		Execute:              func(c *render.PassContext) error { return ssaoExecute(state, c) },
+		InvalidateBindGroups: func() { ssaoInvalidate(state) },
+		Release:              func() { ssaoRelease(state) },
 	}
 	if err := renderer.Graph.AddPass(pass, []render.SlotBinding{
 		{Slot: "depth", ResourceID: renderer.DepthID},
@@ -96,11 +95,10 @@ func AddSsaoPass(renderer *render.Renderer, aspect func() float32) (*render.Pass
 	blurPass := &render.Pass{
 		Name:                 "ssao_blur",
 		Reads:                []string{"depth", "view_normals"},
-		State:                blurState,
-		Prepare:              ssaoBlurPrepare,
-		Execute:              ssaoBlurExecute,
-		InvalidateBindGroups: ssaoBlurInvalidate,
-		Release:              ssaoBlurRelease,
+		Prepare:              func(c *render.PassContext) error { return ssaoBlurPrepare(blurState, c) },
+		Execute:              func(c *render.PassContext) error { return ssaoBlurExecute(blurState, c) },
+		InvalidateBindGroups: func() { ssaoBlurInvalidate(blurState) },
+		Release:              func() { ssaoBlurRelease(blurState) },
 	}
 	if err := renderer.Graph.AddPass(blurPass, []render.SlotBinding{
 		{Slot: "depth", ResourceID: renderer.DepthID},
@@ -251,8 +249,7 @@ func newSsaoState(device *wgpu.Device, aspect func() float32) (*ssaoPassState, e
 	}, nil
 }
 
-func ssaoPrepare(s any, context *render.PassContext) error {
-	state := s.(*ssaoPassState)
+func ssaoPrepare(state *ssaoPassState, context *render.PassContext) error {
 	width, height, err := ssaoSize(context, "depth")
 	if err != nil {
 		return err
@@ -323,8 +320,7 @@ func ssaoPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func ssaoExecute(s any, context *render.PassContext) error {
-	state := s.(*ssaoPassState)
+func ssaoExecute(state *ssaoPassState, context *render.PassContext) error {
 	if state.rawView == nil {
 		return nil
 	}
@@ -345,16 +341,14 @@ func ssaoExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func ssaoInvalidate(s any) {
-	state := s.(*ssaoPassState)
+func ssaoInvalidate(state *ssaoPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 		state.bindGroup = nil
 	}
 }
 
-func ssaoRelease(s any) {
-	state := s.(*ssaoPassState)
+func ssaoRelease(state *ssaoPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}

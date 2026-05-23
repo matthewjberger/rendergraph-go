@@ -127,15 +127,13 @@ func NewSkyPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect fu
 	return &render.Pass{
 		Name:    "sky",
 		Writes:  []string{"color"},
-		State:   state,
-		Prepare: skyPrepare,
-		Execute: skyExecute,
-		Release: skyRelease,
+		Prepare: func(c *render.PassContext) error { return skyPrepare(state, c) },
+		Execute: func(c *render.PassContext) error { return skyExecute(state, c) },
+		Release: func() { skyRelease(state) },
 	}, nil
 }
 
-func skyPrepare(s any, context *render.PassContext) error {
-	state := s.(*skyPassState)
+func skyPrepare(state *skyPassState, context *render.PassContext) error {
 	camera := ecs.MustResource[render.Camera](context.World)
 	aspect := state.aspectFn()
 	proj := render.CameraProjection(camera, aspect)
@@ -154,8 +152,7 @@ func skyPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func skyExecute(s any, context *render.PassContext) error {
-	state := s.(*skyPassState)
+func skyExecute(state *skyPassState, context *render.PassContext) error {
 	settings := ecs.MustResource[render.Graphics](context.World)
 
 	colorAttachment, err := context.ColorAttachment("color")
@@ -177,8 +174,7 @@ func skyExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func skyRelease(s any) {
-	state := s.(*skyPassState)
+func skyRelease(state *skyPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}

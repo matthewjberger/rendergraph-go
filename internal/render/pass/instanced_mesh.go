@@ -65,10 +65,9 @@ func AddInstancedMeshPass(renderer *render.Renderer) (*render.Pass, error) {
 	pass := &render.Pass{
 		Name:    "instanced_mesh",
 		Writes:  []string{"color", "depth", "entity_id", "view_normals"},
-		State:   state,
-		Prepare: instancedMeshPrepare,
-		Execute: instancedMeshExecute,
-		Release: instancedMeshRelease,
+		Prepare: func(c *render.PassContext) error { return instancedMeshPrepare(state, c) },
+		Execute: func(c *render.PassContext) error { return instancedMeshExecute(state, c) },
+		Release: func() { instancedMeshRelease(state) },
 	}
 	if err := renderer.Graph.AddPass(pass, []render.SlotBinding{
 		{Slot: "color", ResourceID: renderer.SceneColorID},
@@ -217,8 +216,7 @@ func newInstancedMeshState(device *wgpu.Device, aspect func() float32) (*instanc
 	}, nil
 }
 
-func instancedMeshPrepare(s any, context *render.PassContext) error {
-	state := s.(*instancedMeshState)
+func instancedMeshPrepare(state *instancedMeshState, context *render.PassContext) error {
 
 	camera, hasCamera := ecs.Resource[render.Camera](context.World)
 	if hasCamera && camera != nil {
@@ -303,8 +301,7 @@ func instancedMeshPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func instancedMeshExecute(s any, context *render.PassContext) error {
-	state := s.(*instancedMeshState)
+func instancedMeshExecute(state *instancedMeshState, context *render.PassContext) error {
 	computeRes, ok := ecs.Resource[InstancedComputeResource](context.World)
 	if !ok || computeRes == nil || computeRes.Compute == nil {
 		return nil
@@ -373,8 +370,7 @@ func instancedMeshExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func instancedMeshRelease(s any) {
-	state := s.(*instancedMeshState)
+func instancedMeshRelease(state *instancedMeshState) {
 	for _, es := range state.perEntity {
 		if es.perEntityBuffer != nil {
 			es.perEntityBuffer.Release()

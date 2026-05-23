@@ -141,9 +141,8 @@ func AddPickProxyPass(renderer *render.Renderer) (*render.Pass, error) {
 		Name:    "pick_proxy",
 		Reads:   []string{"depth"},
 		Writes:  []string{"entity_id"},
-		State:   state,
-		Execute: pickProxyExecute,
-		Release: pickProxyRelease,
+		Execute: func(c *render.PassContext) error { return pickProxyExecute(state, c) },
+		Release: func() { pickProxyRelease(state) },
 	}
 	if err := renderer.Graph.AddPass(pass, []render.SlotBinding{
 		{Slot: "depth", ResourceID: renderer.DepthID},
@@ -154,8 +153,7 @@ func AddPickProxyPass(renderer *render.Renderer) (*render.Pass, error) {
 	return pass, nil
 }
 
-func pickProxyExecute(s any, context *render.PassContext) error {
-	state := s.(*pickProxyPassState)
+func pickProxyExecute(state *pickProxyPassState, context *render.PassContext) error {
 	mask := ecs.MustMaskOf[render.PickProxy](context.World) |
 		ecs.MustMaskOf[asset.RenderMesh](context.World) |
 		ecs.MustMaskOf[transform.GlobalTransform](context.World)
@@ -224,8 +222,7 @@ func pickProxyExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func pickProxyRelease(s any) {
-	state := s.(*pickProxyPassState)
+func pickProxyRelease(state *pickProxyPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}

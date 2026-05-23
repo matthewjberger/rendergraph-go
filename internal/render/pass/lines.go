@@ -241,15 +241,13 @@ func NewLinesPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect 
 	return &render.Pass{
 		Name:    "lines",
 		Writes:  []string{"color", "depth"},
-		State:   state,
-		Prepare: linesPrepare,
-		Execute: linesExecute,
-		Release: linesRelease,
+		Prepare: func(c *render.PassContext) error { return linesPrepare(state, c) },
+		Execute: func(c *render.PassContext) error { return linesExecute(state, c) },
+		Release: func() { linesRelease(state) },
 	}, nil
 }
 
-func linesPrepare(s any, context *render.PassContext) error {
-	state := s.(*linesPassState)
+func linesPrepare(state *linesPassState, context *render.PassContext) error {
 	state.count = 0
 	state.overlayCount = 0
 
@@ -282,8 +280,7 @@ func linesPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func linesExecute(s any, context *render.PassContext) error {
-	state := s.(*linesPassState)
+func linesExecute(state *linesPassState, context *render.PassContext) error {
 	if state.count == 0 && state.overlayCount == 0 {
 		clearLines(context.World)
 		return nil
@@ -329,8 +326,7 @@ func clearLines(world *ecs.World) {
 	lines.OverlaySegments = lines.OverlaySegments[:0]
 }
 
-func linesRelease(s any) {
-	state := s.(*linesPassState)
+func linesRelease(state *linesPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}

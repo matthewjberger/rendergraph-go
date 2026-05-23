@@ -115,15 +115,13 @@ func NewPresentPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat) (*ren
 		Name:                 "present",
 		Reads:                []string{"input"},
 		Writes:               []string{"output"},
-		State:                state,
-		Execute:              presentExecute,
-		InvalidateBindGroups: presentInvalidateBindGroups,
-		Release:              presentRelease,
+		Execute:              func(c *render.PassContext) error { return presentExecute(state, c) },
+		InvalidateBindGroups: func() { presentInvalidateBindGroups(state) },
+		Release:              func() { presentRelease(state) },
 	}, nil
 }
 
-func presentExecute(s any, context *render.PassContext) error {
-	state := s.(*presentPassState)
+func presentExecute(state *presentPassState, context *render.PassContext) error {
 
 	if state.bindGroup == nil {
 		inputView, err := context.TextureView("input")
@@ -161,16 +159,14 @@ func presentExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func presentInvalidateBindGroups(s any) {
-	state := s.(*presentPassState)
+func presentInvalidateBindGroups(state *presentPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 		state.bindGroup = nil
 	}
 }
 
-func presentRelease(s any) {
-	state := s.(*presentPassState)
+func presentRelease(state *presentPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}

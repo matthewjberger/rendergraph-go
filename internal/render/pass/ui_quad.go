@@ -175,15 +175,13 @@ func NewUiQuadPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat) (*rend
 	return &render.Pass{
 		Name:    "ui_quad",
 		Writes:  []string{"color"},
-		State:   state,
-		Prepare: uiQuadPrepare,
-		Execute: uiQuadExecute,
-		Release: uiQuadRelease,
+		Prepare: func(c *render.PassContext) error { return uiQuadPrepare(state, c) },
+		Execute: func(c *render.PassContext) error { return uiQuadExecute(state, c) },
+		Release: func() { uiQuadRelease(state) },
 	}, nil
 }
 
-func uiQuadPrepare(s any, context *render.PassContext) error {
-	state := s.(*uiQuadPassState)
+func uiQuadPrepare(state *uiQuadPassState, context *render.PassContext) error {
 	state.count = 0
 
 	if !ui.HasUI(context.World) {
@@ -239,8 +237,7 @@ func uiQuadPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func uiQuadExecute(s any, context *render.PassContext) error {
-	state := s.(*uiQuadPassState)
+func uiQuadExecute(state *uiQuadPassState, context *render.PassContext) error {
 	if state.count == 0 {
 		return nil
 	}
@@ -260,8 +257,7 @@ func uiQuadExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func uiQuadRelease(s any) {
-	state := s.(*uiQuadPassState)
+func uiQuadRelease(state *uiQuadPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}

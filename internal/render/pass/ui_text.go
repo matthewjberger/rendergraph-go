@@ -202,10 +202,9 @@ func NewUiTextPass(device *wgpu.Device, queue *wgpu.Queue, surfaceFormat wgpu.Te
 	return &render.Pass{
 		Name:    "ui_text",
 		Writes:  []string{"color"},
-		State:   state,
-		Prepare: uiTextPrepare,
-		Execute: uiTextExecute,
-		Release: uiTextRelease,
+		Prepare: func(c *render.PassContext) error { return uiTextPrepare(state, c) },
+		Execute: func(c *render.PassContext) error { return uiTextExecute(state, c) },
+		Release: func() { uiTextRelease(state) },
 	}, nil
 }
 
@@ -214,8 +213,7 @@ type textGlyphBatch struct {
 	z          int32
 }
 
-func uiTextPrepare(s any, context *render.PassContext) error {
-	state := s.(*uiTextPassState)
+func uiTextPrepare(state *uiTextPassState, context *render.PassContext) error {
 	state.count = 0
 	state.scratch = state.scratch[:0]
 
@@ -309,8 +307,7 @@ func uiTextPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func uiTextExecute(s any, context *render.PassContext) error {
-	state := s.(*uiTextPassState)
+func uiTextExecute(state *uiTextPassState, context *render.PassContext) error {
 	if state.count == 0 {
 		return nil
 	}
@@ -403,8 +400,7 @@ func sortTextBatches(scratch []uiTextGlyphInstance, batches []textGlyphBatch) {
 	copy(scratch, out)
 }
 
-func uiTextRelease(s any) {
-	state := s.(*uiTextPassState)
+func uiTextRelease(state *uiTextPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}

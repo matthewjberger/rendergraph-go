@@ -161,16 +161,14 @@ func NewOutlinePass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, viewp
 		Name:                 "outline",
 		Reads:                []string{"selection_mask"},
 		Writes:               []string{"color"},
-		State:                state,
-		Prepare:              outlinePrepare,
-		Execute:              outlineExecute,
-		InvalidateBindGroups: outlineInvalidate,
-		Release:              outlineRelease,
+		Prepare:              func(c *render.PassContext) error { return outlinePrepare(state, c) },
+		Execute:              func(c *render.PassContext) error { return outlineExecute(state, c) },
+		InvalidateBindGroups: func() { outlineInvalidate(state) },
+		Release:              func() { outlineRelease(state) },
 	}, nil
 }
 
-func outlinePrepare(s any, context *render.PassContext) error {
-	state := s.(*outlinePassState)
+func outlinePrepare(state *outlinePassState, context *render.PassContext) error {
 
 	width, height := state.aspectFn()
 	params := outlineParams{
@@ -183,8 +181,7 @@ func outlinePrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func outlineExecute(s any, context *render.PassContext) error {
-	state := s.(*outlinePassState)
+func outlineExecute(state *outlinePassState, context *render.PassContext) error {
 
 	if state.bindGroup == nil {
 		maskView, err := context.TextureView("selection_mask")
@@ -222,16 +219,14 @@ func outlineExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func outlineInvalidate(s any) {
-	state := s.(*outlinePassState)
+func outlineInvalidate(state *outlinePassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 		state.bindGroup = nil
 	}
 }
 
-func outlineRelease(s any) {
-	state := s.(*outlinePassState)
+func outlineRelease(state *outlinePassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}

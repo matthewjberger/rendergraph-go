@@ -67,14 +67,12 @@ func NewPickingPass(device *wgpu.Device) (*render.Pass, error) {
 	return &render.Pass{
 		Name:    "picking",
 		Reads:   []string{"entity_id"},
-		State:   state,
-		Prepare: pickingPrepare,
-		Release: pickingRelease,
+		Prepare: func(c *render.PassContext) error { return pickingPrepare(state, c) },
+		Release: func() { pickingRelease(state) },
 	}, nil
 }
 
-func pickingPrepare(s any, context *render.PassContext) error {
-	state := s.(*pickingPassState)
+func pickingPrepare(state *pickingPassState, context *render.PassContext) error {
 	if state.picking == nil {
 		if !ecs.HasResource[*Picking](context.World) {
 			return nil
@@ -131,8 +129,7 @@ func pickingPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func pickingRelease(s any) {
-	state := s.(*pickingPassState)
+func pickingRelease(state *pickingPassState) {
 	if state.stagingBuffer != nil {
 		state.stagingBuffer.Release()
 	}

@@ -64,11 +64,10 @@ func AddAutoExposurePass(renderer *render.Renderer) (*render.Pass, error) {
 	pass := &render.Pass{
 		Name:                 "auto_exposure",
 		Reads:                []string{"scene_color"},
-		State:                state,
-		Prepare:              autoExposurePrepare,
-		Execute:              autoExposureExecute,
-		InvalidateBindGroups: autoExposureInvalidate,
-		Release:              autoExposureRelease,
+		Prepare:              func(c *render.PassContext) error { return autoExposurePrepare(state, c) },
+		Execute:              func(c *render.PassContext) error { return autoExposureExecute(state, c) },
+		InvalidateBindGroups: func() { autoExposureInvalidate(state) },
+		Release:              func() { autoExposureRelease(state) },
 	}
 	if err := renderer.Graph.AddPass(pass, []render.SlotBinding{
 		{Slot: "scene_color", ResourceID: renderer.SceneColorID},
@@ -135,8 +134,7 @@ func newAutoExposureState(device *wgpu.Device) (*autoExposurePassState, error) {
 	}, nil
 }
 
-func autoExposurePrepare(s any, context *render.PassContext) error {
-	state := s.(*autoExposurePassState)
+func autoExposurePrepare(state *autoExposurePassState, context *render.PassContext) error {
 	settings := DefaultAutoExposureSettings()
 	if resource, ok := ecs.Resource[AutoExposureSettings](context.World); ok && resource != nil {
 		settings = *resource
@@ -181,8 +179,7 @@ func autoExposurePrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func autoExposureExecute(s any, context *render.PassContext) error {
-	state := s.(*autoExposurePassState)
+func autoExposureExecute(state *autoExposurePassState, context *render.PassContext) error {
 	if state.bg == nil {
 		return nil
 	}
@@ -195,8 +192,7 @@ func autoExposureExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func autoExposureInvalidate(s any) {
-	state := s.(*autoExposurePassState)
+func autoExposureInvalidate(state *autoExposurePassState) {
 	if state.bg != nil {
 		state.bg.Release()
 		state.bg = nil
@@ -204,8 +200,7 @@ func autoExposureInvalidate(s any) {
 	state.lastView = nil
 }
 
-func autoExposureRelease(s any) {
-	state := s.(*autoExposurePassState)
+func autoExposureRelease(state *autoExposurePassState) {
 	if state.bg != nil {
 		state.bg.Release()
 	}

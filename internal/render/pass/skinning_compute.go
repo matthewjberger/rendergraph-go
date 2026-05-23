@@ -110,17 +110,16 @@ type SkinningComputeResource struct {
 
 func AddSkinningComputePass(renderer *render.Renderer, sc *SkinningCompute) (*render.Pass, error) {
 	pass := &render.Pass{
-		Name:  "skinning_compute",
-		State: sc,
-		Execute: func(state any, context *render.PassContext) error {
-			compute := state.(*SkinningCompute)
+		Name: "skinning_compute",
+		Execute: func(context *render.PassContext) error {
+			compute := sc
 			if compute.Prepare(context.World, context.Device, context.Queue, context.Encoder) {
 				compute.Dispatch(context.Encoder)
 			}
 			return nil
 		},
-		Release: func(state any) {
-			state.(*SkinningCompute).Release()
+		Release: func() {
+			sc.Release()
 		},
 	}
 	if err := renderer.Graph.AddPass(pass, nil); err != nil {

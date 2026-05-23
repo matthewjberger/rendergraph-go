@@ -257,10 +257,9 @@ func AddSpotShadowPass(renderer *render.Renderer, shadow *SpotShadow) (*render.P
 		Name:    "spot_shadow",
 		Reads:   nil,
 		Writes:  nil,
-		State:   state,
-		Prepare: spotShadowPrepare,
-		Execute: spotShadowExecute,
-		Release: spotShadowRelease,
+		Prepare: func(c *render.PassContext) error { return spotShadowPrepare(state, c) },
+		Execute: func(c *render.PassContext) error { return spotShadowExecute(state, c) },
+		Release: func() { spotShadowRelease(state) },
 	}
 	if err := renderer.Graph.AddPass(p, nil); err != nil {
 		return nil, err
@@ -276,8 +275,7 @@ type spotShadowPassState struct {
 	slotBgs        [MaxSpotShadows]*wgpu.BindGroup
 }
 
-func spotShadowPrepare(s any, context *render.PassContext) error {
-	state := s.(*spotShadowPassState)
+func spotShadowPrepare(state *spotShadowPassState, context *render.PassContext) error {
 	shadow := state.shadow
 	shadow.ActiveCount = 0
 	for index := range shadow.SlotEntities {
@@ -392,8 +390,7 @@ func drawNonLightInstances(passEnc *wgpu.RenderPassEncoder, bucket *handleInstan
 	}
 }
 
-func spotShadowRelease(s any) {
-	state := s.(*spotShadowPassState)
+func spotShadowRelease(state *spotShadowPassState) {
 	for index := range state.slotBgs {
 		if state.slotBgs[index] != nil {
 			state.slotBgs[index].Release()

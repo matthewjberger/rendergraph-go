@@ -82,15 +82,14 @@ func NewInstancedCompute(device *wgpu.Device) (*InstancedCompute, error) {
 
 func AddInstancedComputePass(renderer *render.Renderer, ic *InstancedCompute) (*render.Pass, error) {
 	pass := &render.Pass{
-		Name:  "instanced_compute",
-		State: ic,
-		Execute: func(state any, context *render.PassContext) error {
-			compute := state.(*InstancedCompute)
+		Name: "instanced_compute",
+		Execute: func(context *render.PassContext) error {
+			compute := ic
 			compute.prepare(context.World, context.Device, context.Queue, context.Encoder)
 			compute.dispatch(context.Encoder)
 			return nil
 		},
-		Release: func(state any) { state.(*InstancedCompute).Release() },
+		Release: func() { ic.Release() },
 	}
 	if err := renderer.Graph.AddPass(pass, nil); err != nil {
 		return nil, err

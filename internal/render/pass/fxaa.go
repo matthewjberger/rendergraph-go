@@ -140,16 +140,14 @@ func NewFxaaPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat) (*render
 		Name:                 "fxaa",
 		Reads:                []string{"input"},
 		Writes:               []string{"output"},
-		State:                state,
-		Prepare:              fxaaPrepare,
-		Execute:              fxaaExecute,
-		InvalidateBindGroups: fxaaInvalidateBindGroups,
-		Release:              fxaaRelease,
+		Prepare:              func(c *render.PassContext) error { return fxaaPrepare(state, c) },
+		Execute:              func(c *render.PassContext) error { return fxaaExecute(state, c) },
+		InvalidateBindGroups: func() { fxaaInvalidateBindGroups(state) },
+		Release:              func() { fxaaRelease(state) },
 	}, nil
 }
 
-func fxaaPrepare(s any, context *render.PassContext) error {
-	state := s.(*fxaaPassState)
+func fxaaPrepare(state *fxaaPassState, context *render.PassContext) error {
 	viewport := ecs.MustResource[window.Window](context.World).Viewport
 	settings := ecs.MustResource[render.Graphics](context.World)
 	width := float32(viewport.Width)
@@ -174,8 +172,7 @@ func fxaaPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func fxaaExecute(s any, context *render.PassContext) error {
-	state := s.(*fxaaPassState)
+func fxaaExecute(state *fxaaPassState, context *render.PassContext) error {
 
 	if state.bindGroup == nil {
 		inputView, err := context.TextureView("input")
@@ -214,16 +211,14 @@ func fxaaExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func fxaaInvalidateBindGroups(s any) {
-	state := s.(*fxaaPassState)
+func fxaaInvalidateBindGroups(state *fxaaPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 		state.bindGroup = nil
 	}
 }
 
-func fxaaRelease(s any) {
-	state := s.(*fxaaPassState)
+func fxaaRelease(state *fxaaPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}

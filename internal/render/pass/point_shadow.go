@@ -333,10 +333,9 @@ func AddPointShadowPass(renderer *render.Renderer, shadow *PointShadow) (*render
 
 	p := &render.Pass{
 		Name:    "point_shadow",
-		State:   state,
-		Prepare: pointShadowPrepare,
-		Execute: pointShadowExecute,
-		Release: pointShadowRelease,
+		Prepare: func(c *render.PassContext) error { return pointShadowPrepare(state, c) },
+		Execute: func(c *render.PassContext) error { return pointShadowExecute(state, c) },
+		Release: func() { pointShadowRelease(state) },
 	}
 	if err := renderer.Graph.AddPass(p, nil); err != nil {
 		return nil, err
@@ -344,8 +343,7 @@ func AddPointShadowPass(renderer *render.Renderer, shadow *PointShadow) (*render
 	return p, nil
 }
 
-func pointShadowPrepare(s any, context *render.PassContext) error {
-	state := s.(*pointShadowPassState)
+func pointShadowPrepare(state *pointShadowPassState, context *render.PassContext) error {
 	shadow := state.shadow
 	shadow.ActiveCount = 0
 	for index := range shadow.SlotEntities {
@@ -437,8 +435,7 @@ func pointShadowPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func pointShadowExecute(s any, context *render.PassContext) error {
-	state := s.(*pointShadowPassState)
+func pointShadowExecute(state *pointShadowPassState, context *render.PassContext) error {
 	shadow := state.shadow
 	if shadow.ActiveCount == 0 {
 		return nil
@@ -493,8 +490,7 @@ func pointShadowExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func pointShadowRelease(s any) {
-	state := s.(*pointShadowPassState)
+func pointShadowRelease(state *pointShadowPassState) {
 	for index := range state.faceBgs {
 		if state.faceBgs[index] != nil {
 			state.faceBgs[index].Release()

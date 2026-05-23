@@ -139,11 +139,10 @@ func NewSelectionMaskPass(device *wgpu.Device) (*render.Pass, error) {
 		Name:                 "selection_mask",
 		Reads:                []string{"entity_id"},
 		Writes:               []string{"selection_mask"},
-		State:                state,
-		Prepare:              selectionMaskPrepare,
-		Execute:              selectionMaskExecute,
-		InvalidateBindGroups: selectionMaskInvalidate,
-		Release:              selectionMaskRelease,
+		Prepare:              func(c *render.PassContext) error { return selectionMaskPrepare(state, c) },
+		Execute:              func(c *render.PassContext) error { return selectionMaskExecute(state, c) },
+		InvalidateBindGroups: func() { selectionMaskInvalidate(state) },
+		Release:              func() { selectionMaskRelease(state) },
 	}, nil
 }
 
@@ -170,8 +169,7 @@ func collectDescendants(world *ecs.World, root ecs.Entity) []ecs.Entity {
 	return out
 }
 
-func selectionMaskPrepare(s any, context *render.PassContext) error {
-	state := s.(*selectionMaskPassState)
+func selectionMaskPrepare(state *selectionMaskPassState, context *render.PassContext) error {
 
 	for i := range state.bitsetScratch {
 		state.bitsetScratch[i] = 0
@@ -193,8 +191,7 @@ func selectionMaskPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func selectionMaskExecute(s any, context *render.PassContext) error {
-	state := s.(*selectionMaskPassState)
+func selectionMaskExecute(state *selectionMaskPassState, context *render.PassContext) error {
 
 	if state.bindGroup == nil {
 		entityIdView, err := context.TextureView("entity_id")
@@ -232,16 +229,14 @@ func selectionMaskExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func selectionMaskInvalidate(s any) {
-	state := s.(*selectionMaskPassState)
+func selectionMaskInvalidate(state *selectionMaskPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 		state.bindGroup = nil
 	}
 }
 
-func selectionMaskRelease(s any) {
-	state := s.(*selectionMaskPassState)
+func selectionMaskRelease(state *selectionMaskPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}

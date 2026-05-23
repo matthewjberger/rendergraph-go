@@ -130,15 +130,13 @@ func NewGizmoPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect 
 	return &render.Pass{
 		Name:    "gizmo",
 		Writes:  []string{"color"},
-		State:   state,
-		Prepare: gizmoPrepare,
-		Execute: gizmoExecute,
-		Release: gizmoRelease,
+		Prepare: func(c *render.PassContext) error { return gizmoPrepare(state, c) },
+		Execute: func(c *render.PassContext) error { return gizmoExecute(state, c) },
+		Release: func() { gizmoRelease(state) },
 	}, nil
 }
 
-func gizmoPrepare(s any, context *render.PassContext) error {
-	state := s.(*gizmoPassState)
+func gizmoPrepare(state *gizmoPassState, context *render.PassContext) error {
 	state.count = 0
 	state.scratch = state.scratch[:0]
 
@@ -252,8 +250,7 @@ func gizmoPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func gizmoExecute(s any, context *render.PassContext) error {
-	state := s.(*gizmoPassState)
+func gizmoExecute(state *gizmoPassState, context *render.PassContext) error {
 	if state.count == 0 {
 		return nil
 	}
@@ -273,8 +270,7 @@ func gizmoExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func gizmoRelease(s any) {
-	state := s.(*gizmoPassState)
+func gizmoRelease(state *gizmoPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}

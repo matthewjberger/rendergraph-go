@@ -128,9 +128,8 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 	return &render.Pass{
 		Name:    "mesh",
 		Writes:  []string{"color", "depth", "entity_id", "view_normals"},
-		State:   state,
-		Prepare: meshPrepare,
-		Execute: meshExecute,
-		Release: meshRelease,
+		Prepare: func(c *render.PassContext) error { return meshPrepare(state, c) },
+		Execute: func(c *render.PassContext) error { return meshExecute(state, c) },
+		Release: func() { meshRelease(state) },
 	}, nil
 }

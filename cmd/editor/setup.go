@@ -157,11 +157,11 @@ func editorApp() *app.App {
 			if _, err := pass.AddAutoExposurePass(renderer); err != nil {
 				log.Fatal(err)
 			}
-			bloomPass, err := pass.AddBloomPass(renderer)
+			_, bloomMipView, err := pass.AddBloomPass(renderer)
 			if err != nil {
 				log.Fatal(err)
 			}
-			if _, err := pass.AddPostProcessPass(renderer, bloomPass); err != nil {
+			if _, err := pass.AddPostProcessPass(renderer, bloomMipView); err != nil {
 				log.Fatal(err)
 			}
 			_, fxaaOutputID, err := pass.AddFxaaPass(renderer)

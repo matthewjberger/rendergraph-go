@@ -8,8 +8,7 @@ import (
 	"github.com/matthewjberger/indigo/render/asset"
 )
 
-func spotShadowExecute(s any, context *render.PassContext) error {
-	state := s.(*spotShadowPassState)
+func spotShadowExecute(state *spotShadowPassState, context *render.PassContext) error {
 	shadow := state.shadow
 	if shadow.ActiveCount == 0 {
 		return nil

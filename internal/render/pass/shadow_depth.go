@@ -430,10 +430,9 @@ func NewShadowDepthPass(device *wgpu.Device, shadow *Shadow) (*render.Pass, erro
 
 	return &render.Pass{
 		Name:    "shadow_depth",
-		State:   state,
-		Prepare: shadowDepthPrepare,
-		Execute: shadowDepthExecute,
-		Release: shadowDepthRelease,
+		Prepare: func(c *render.PassContext) error { return shadowDepthPrepare(state, c) },
+		Execute: func(c *render.PassContext) error { return shadowDepthExecute(state, c) },
+		Release: func() { shadowDepthRelease(state) },
 	}, nil
 }
 
@@ -576,8 +575,7 @@ func fitLightFrustum(corners [8]mgl32.Vec3, lightDir mgl32.Vec3) (mgl32.Mat4, fl
 	return lightProj.Mul4(lightView), texelWorld
 }
 
-func shadowDepthExecute(s any, context *render.PassContext) error {
-	state := s.(*shadowDepthPassState)
+func shadowDepthExecute(state *shadowDepthPassState, context *render.PassContext) error {
 	shadow := ecs.MustResource[ShadowResource](context.World).Shadow
 
 	meshState, ok := findMeshPassState(context.World)
@@ -754,8 +752,7 @@ func shadowDepthExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func shadowDepthRelease(s any) {
-	state := s.(*shadowDepthPassState)
+func shadowDepthRelease(state *shadowDepthPassState) {
 	for index := range state.cascadeBgs {
 		if state.cascadeBgs[index] != nil {
 			state.cascadeBgs[index].Release()

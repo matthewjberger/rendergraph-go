@@ -49,10 +49,9 @@ func AddSkinnedMeshPass(renderer *render.Renderer) (*render.Pass, error) {
 	pass := &render.Pass{
 		Name:    "skinned_mesh",
 		Writes:  []string{"color", "depth", "entity_id", "view_normals"},
-		State:   state,
-		Prepare: skinnedMeshPrepare,
-		Execute: skinnedMeshExecute,
-		Release: skinnedMeshRelease,
+		Prepare: func(c *render.PassContext) error { return skinnedMeshPrepare(state, c) },
+		Execute: func(c *render.PassContext) error { return skinnedMeshExecute(state, c) },
+		Release: func() { skinnedMeshRelease(state) },
 	}
 	if err := renderer.Graph.AddPass(pass, []render.SlotBinding{
 		{Slot: "color", ResourceID: renderer.SceneColorID},
@@ -260,8 +259,7 @@ func ensureSkinnedHandleBindGroup(device *wgpu.Device, layout *wgpu.BindGroupLay
 	return *cached
 }
 
-func skinnedMeshPrepare(s any, context *render.PassContext) error {
-	state := s.(*skinnedMeshPassState)
+func skinnedMeshPrepare(state *skinnedMeshPassState, context *render.PassContext) error {
 
 	camera, hasCamera := ecs.Resource[render.Camera](context.World)
 	if hasCamera && camera != nil {
@@ -303,8 +301,7 @@ func skinnedMeshPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func skinnedMeshExecute(s any, context *render.PassContext) error {
-	state := s.(*skinnedMeshPassState)
+func skinnedMeshExecute(state *skinnedMeshPassState, context *render.PassContext) error {
 	if state.handleBindGroup == nil {
 		return nil
 	}
@@ -359,8 +356,7 @@ func skinnedMeshExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func skinnedMeshRelease(s any) {
-	state := s.(*skinnedMeshPassState)
+func skinnedMeshRelease(state *skinnedMeshPassState) {
 	if state.handleBindGroup != nil {
 		state.handleBindGroup.Release()
 	}

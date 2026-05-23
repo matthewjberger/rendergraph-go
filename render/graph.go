@@ -260,7 +260,7 @@ func (g *Graph) Execute(device *wgpu.Device, queue *wgpu.Queue, world *ecs.World
 			}
 		}
 		if dirty && entry.pass.InvalidateBindGroups != nil {
-			entry.pass.InvalidateBindGroups(entry.pass.State)
+			entry.pass.InvalidateBindGroups()
 		}
 		if dirty {
 			for _, slot := range entry.pass.Reads {
@@ -280,12 +280,12 @@ func (g *Graph) Execute(device *wgpu.Device, queue *wgpu.Queue, world *ecs.World
 			ClearOps:  g.clearOps,
 		}
 		if entry.pass.Prepare != nil {
-			if err := entry.pass.Prepare(entry.pass.State, context); err != nil {
+			if err := entry.pass.Prepare(context); err != nil {
 				return fmt.Errorf("render: pass %q prepare: %w", entry.pass.Name, err)
 			}
 		}
 		if entry.pass.Execute != nil {
-			if err := entry.pass.Execute(entry.pass.State, context); err != nil {
+			if err := entry.pass.Execute(context); err != nil {
 				return fmt.Errorf("render: pass %q execute: %w", entry.pass.Name, err)
 			}
 		}
@@ -296,7 +296,7 @@ func (g *Graph) Execute(device *wgpu.Device, queue *wgpu.Queue, world *ecs.World
 func (g *Graph) Release() {
 	for _, entry := range g.passes {
 		if entry.pass.Release != nil {
-			entry.pass.Release(entry.pass.State)
+			entry.pass.Release()
 		}
 	}
 	g.Resources.ReleaseOwned()

@@ -145,15 +145,13 @@ func NewGridPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 	return &render.Pass{
 		Name:    "grid",
 		Writes:  []string{"color", "depth"},
-		State:   state,
-		Prepare: gridPrepare,
-		Execute: gridExecute,
-		Release: gridRelease,
+		Prepare: func(c *render.PassContext) error { return gridPrepare(state, c) },
+		Execute: func(c *render.PassContext) error { return gridExecute(state, c) },
+		Release: func() { gridRelease(state) },
 	}, nil
 }
 
-func gridPrepare(s any, context *render.PassContext) error {
-	state := s.(*gridPassState)
+func gridPrepare(state *gridPassState, context *render.PassContext) error {
 	camera := ecs.MustResource[render.Camera](context.World)
 	aspect := state.aspectFn()
 
@@ -172,8 +170,7 @@ func gridPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func gridExecute(s any, context *render.PassContext) error {
-	state := s.(*gridPassState)
+func gridExecute(state *gridPassState, context *render.PassContext) error {
 	settings := ecs.MustResource[render.Graphics](context.World)
 	if !settings.ShowGrid {
 		return nil
@@ -201,8 +198,7 @@ func gridExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func gridRelease(s any) {
-	state := s.(*gridPassState)
+func gridRelease(state *gridPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}

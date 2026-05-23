@@ -74,8 +74,8 @@ func AddFxaaPass(renderer *render.Renderer) (*render.Pass, render.ResourceID, er
 	return pass, fxaaOutputID, nil
 }
 
-func AddPostProcessPass(renderer *render.Renderer, bloom *render.Pass) (*render.Pass, error) {
-	pass, err := NewPostProcessPass(renderer.Device, renderer.SurfaceFormat, bloom)
+func AddPostProcessPass(renderer *render.Renderer, bloomMipView func() *wgpu.TextureView) (*render.Pass, error) {
+	pass, err := NewPostProcessPass(renderer.Device, renderer.SurfaceFormat, bloomMipView)
 	if err != nil {
 		return nil, err
 	}

@@ -53,11 +53,10 @@ func AddOitMeshPass(renderer *render.Renderer) (*render.Pass, error) {
 		Name:                 "oit_mesh",
 		Reads:                []string{"depth"},
 		Writes:               []string{"oit_accum", "oit_reveal", "entity_id"},
-		State:                state,
-		Prepare:              oitMeshPrepare,
-		Execute:              oitMeshExecute,
-		InvalidateBindGroups: oitMeshInvalidate,
-		Release:              oitMeshRelease,
+		Prepare:              func(c *render.PassContext) error { return oitMeshPrepare(state, c) },
+		Execute:              func(c *render.PassContext) error { return oitMeshExecute(state, c) },
+		InvalidateBindGroups: func() { oitMeshInvalidate(state) },
+		Release:              func() { oitMeshRelease(state) },
 	}
 	if err := renderer.Graph.AddPass(pass, []render.SlotBinding{
 		{Slot: "oit_accum", ResourceID: renderer.OitAccumID},
@@ -209,8 +208,7 @@ func newOitMeshState(device *wgpu.Device, aspect func() float32) (*oitMeshPassSt
 	}, nil
 }
 
-func oitMeshPrepare(s any, context *render.PassContext) error {
-	state := s.(*oitMeshPassState)
+func oitMeshPrepare(state *oitMeshPassState, context *render.PassContext) error {
 
 	camera, hasCamera := ecs.Resource[render.Camera](context.World)
 	viewProj := mgl32.Ident4()
@@ -289,8 +287,7 @@ func oitMeshPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func oitMeshExecute(s any, context *render.PassContext) error {
-	state := s.(*oitMeshPassState)
+func oitMeshExecute(state *oitMeshPassState, context *render.PassContext) error {
 	meshState, ok := findMeshPassState(context.World)
 	if !ok || len(meshState.sortedHandles) == 0 {
 		return nil
@@ -344,16 +341,14 @@ func oitMeshExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func oitMeshInvalidate(s any) {
-	state := s.(*oitMeshPassState)
+func oitMeshInvalidate(state *oitMeshPassState) {
 	if state.globalGroup != nil {
 		state.globalGroup.Release()
 		state.globalGroup = nil
 	}
 }
 
-func oitMeshRelease(s any) {
-	state := s.(*oitMeshPassState)
+func oitMeshRelease(state *oitMeshPassState) {
 	if state.globalGroup != nil {
 		state.globalGroup.Release()
 	}
@@ -389,11 +384,10 @@ func AddOitCompositePass(renderer *render.Renderer) (*render.Pass, error) {
 		Name:                 "oit_composite",
 		Reads:                []string{"oit_accum", "oit_reveal"},
 		Writes:               []string{"scene_color"},
-		State:                state,
-		Prepare:              oitCompositePrepare,
-		Execute:              oitCompositeExecute,
-		InvalidateBindGroups: oitCompositeInvalidate,
-		Release:              oitCompositeRelease,
+		Prepare:              func(c *render.PassContext) error { return oitCompositePrepare(state, c) },
+		Execute:              func(c *render.PassContext) error { return oitCompositeExecute(state, c) },
+		InvalidateBindGroups: func() { oitCompositeInvalidate(state) },
+		Release:              func() { oitCompositeRelease(state) },
 	}
 	if err := renderer.Graph.AddPass(pass, []render.SlotBinding{
 		{Slot: "oit_accum", ResourceID: renderer.OitAccumID},
@@ -491,8 +485,7 @@ func newOitCompositeState(device *wgpu.Device) (*oitCompositePassState, error) {
 	}, nil
 }
 
-func oitCompositePrepare(s any, context *render.PassContext) error {
-	state := s.(*oitCompositePassState)
+func oitCompositePrepare(state *oitCompositePassState, context *render.PassContext) error {
 	accumView, err := context.TextureView("oit_accum")
 	if err != nil {
 		return err
@@ -526,8 +519,7 @@ func oitCompositePrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func oitCompositeExecute(s any, context *render.PassContext) error {
-	state := s.(*oitCompositePassState)
+func oitCompositeExecute(state *oitCompositePassState, context *render.PassContext) error {
 	color, err := context.ColorAttachment("scene_color")
 	if err != nil {
 		return err
@@ -545,8 +537,7 @@ func oitCompositeExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func oitCompositeInvalidate(s any) {
-	state := s.(*oitCompositePassState)
+func oitCompositeInvalidate(state *oitCompositePassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 		state.bindGroup = nil
@@ -555,8 +546,7 @@ func oitCompositeInvalidate(s any) {
 	state.lastRevealView = nil
 }
 
-func oitCompositeRelease(s any) {
-	state := s.(*oitCompositePassState)
+func oitCompositeRelease(state *oitCompositePassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}

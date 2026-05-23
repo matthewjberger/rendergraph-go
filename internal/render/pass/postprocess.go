@@ -31,7 +31,7 @@ type postprocessPassState struct {
 	sampler                 *wgpu.Sampler
 	uniformBuffer           *wgpu.Buffer
 	bindGroup               *wgpu.BindGroup
-	bloom                   *render.Pass
+	bloomMipView            func() *wgpu.TextureView
 	dummyTexture            *wgpu.Texture
 	dummyView               *wgpu.TextureView
 	lastSsaoView            *wgpu.TextureView
@@ -39,8 +39,8 @@ type postprocessPassState struct {
 	lastAutoExposureBuf     *wgpu.Buffer
 }
 
-func NewPostProcessPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, bloom *render.Pass) (*render.Pass, error) {
-	state := &postprocessPassState{bloom: bloom}
+func NewPostProcessPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, bloomMipView func() *wgpu.TextureView) (*render.Pass, error) {
+	state := &postprocessPassState{bloomMipView: bloomMipView}
 
 	dummyTex, err := device.CreateTexture(&wgpu.TextureDescriptor{
 		Label: "postprocess bloom dummy",
@@ -213,16 +213,14 @@ func NewPostProcessPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, b
 		Name:                 "postprocess",
 		Reads:                []string{"input"},
 		Writes:               []string{"output"},
-		State:                state,
-		Prepare:              postprocessPrepare,
-		Execute:              postprocessExecute,
-		InvalidateBindGroups: postprocessInvalidate,
-		Release:              postprocessRelease,
+		Prepare:              func(c *render.PassContext) error { return postprocessPrepare(state, c) },
+		Execute:              func(c *render.PassContext) error { return postprocessExecute(state, c) },
+		InvalidateBindGroups: func() { postprocessInvalidate(state) },
+		Release:              func() { postprocessRelease(state) },
 	}, nil
 }
 
-func postprocessPrepare(s any, context *render.PassContext) error {
-	state := s.(*postprocessPassState)
+func postprocessPrepare(state *postprocessPassState, context *render.PassContext) error {
 
 	settings := render.DefaultGraphics()
 	if resource, ok := ecs.Resource[render.Graphics](context.World); ok {
@@ -231,8 +229,8 @@ func postprocessPrepare(s any, context *render.PassContext) error {
 
 	bloomView := state.dummyView
 	bloomEnabled := float32(0.0)
-	if settings.Bloom.Enabled && state.bloom != nil {
-		if view := BloomMipView(state.bloom); view != nil {
+	if settings.Bloom.Enabled && state.bloomMipView != nil {
+		if view := state.bloomMipView(); view != nil {
 			bloomView = view
 			bloomEnabled = 1.0
 		}
@@ -311,8 +309,7 @@ func postprocessPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func postprocessExecute(s any, context *render.PassContext) error {
-	state := s.(*postprocessPassState)
+func postprocessExecute(state *postprocessPassState, context *render.PassContext) error {
 	attachment, err := context.ColorAttachment("output")
 	if err != nil {
 		return err
@@ -329,16 +326,14 @@ func postprocessExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func postprocessInvalidate(s any) {
-	state := s.(*postprocessPassState)
+func postprocessInvalidate(state *postprocessPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 		state.bindGroup = nil
 	}
 }
 
-func postprocessRelease(s any) {
-	state := s.(*postprocessPassState)
+func postprocessRelease(state *postprocessPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}

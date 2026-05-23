@@ -58,7 +58,7 @@ type bloomPassState struct {
 	filterRadius float32
 }
 
-func NewBloomPass(device *wgpu.Device) (*render.Pass, error) {
+func NewBloomPass(device *wgpu.Device) (*render.Pass, func() *wgpu.TextureView, error) {
 	state := &bloomPassState{
 		device:       device,
 		threshold:    1.0,
@@ -90,7 +90,7 @@ func NewBloomPass(device *wgpu.Device) (*render.Pass, error) {
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("bloom: downsample layout: %w", err)
+		return nil, nil, fmt.Errorf("bloom: downsample layout: %w", err)
 	}
 	state.downsampleLayout = downsampleLayout
 
@@ -118,7 +118,7 @@ func NewBloomPass(device *wgpu.Device) (*render.Pass, error) {
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("bloom: upsample layout: %w", err)
+		return nil, nil, fmt.Errorf("bloom: upsample layout: %w", err)
 	}
 	state.upsampleLayout = upsampleLayout
 
@@ -133,7 +133,7 @@ func NewBloomPass(device *wgpu.Device) (*render.Pass, error) {
 		MaxAnisotropy: 1,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("bloom: sampler: %w", err)
+		return nil, nil, fmt.Errorf("bloom: sampler: %w", err)
 	}
 	state.sampler = sampler
 
@@ -144,7 +144,7 @@ func NewBloomPass(device *wgpu.Device) (*render.Pass, error) {
 			Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("bloom: downsample params %d: %w", index, err)
+			return nil, nil, fmt.Errorf("bloom: downsample params %d: %w", index, err)
 		}
 		state.downsampleParams = append(state.downsampleParams, buffer)
 	}
@@ -155,7 +155,7 @@ func NewBloomPass(device *wgpu.Device) (*render.Pass, error) {
 		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("bloom: upsample params: %w", err)
+		return nil, nil, fmt.Errorf("bloom: upsample params: %w", err)
 	}
 	state.upsampleParams = upsampleParams
 
@@ -164,7 +164,7 @@ func NewBloomPass(device *wgpu.Device) (*render.Pass, error) {
 		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{Code: bloomDownsampleShader},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("bloom: downsample shader: %w", err)
+		return nil, nil, fmt.Errorf("bloom: downsample shader: %w", err)
 	}
 	defer downsampleShader.Release()
 	upsampleShader, err := device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
@@ -172,7 +172,7 @@ func NewBloomPass(device *wgpu.Device) (*render.Pass, error) {
 		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{Code: bloomUpsampleShader},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("bloom: upsample shader: %w", err)
+		return nil, nil, fmt.Errorf("bloom: upsample shader: %w", err)
 	}
 	defer upsampleShader.Release()
 
@@ -181,7 +181,7 @@ func NewBloomPass(device *wgpu.Device) (*render.Pass, error) {
 		BindGroupLayouts: []*wgpu.BindGroupLayout{downsampleLayout},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("bloom: downsample pipeline layout: %w", err)
+		return nil, nil, fmt.Errorf("bloom: downsample pipeline layout: %w", err)
 	}
 	defer downsamplePipelineLayout.Release()
 
@@ -190,7 +190,7 @@ func NewBloomPass(device *wgpu.Device) (*render.Pass, error) {
 		BindGroupLayouts: []*wgpu.BindGroupLayout{upsampleLayout},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("bloom: upsample pipeline layout: %w", err)
+		return nil, nil, fmt.Errorf("bloom: upsample pipeline layout: %w", err)
 	}
 	defer upsamplePipelineLayout.Release()
 
@@ -213,7 +213,7 @@ func NewBloomPass(device *wgpu.Device) (*render.Pass, error) {
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("bloom: downsample pipeline: %w", err)
+		return nil, nil, fmt.Errorf("bloom: downsample pipeline: %w", err)
 	}
 	state.downsamplePipeline = downsamplePipeline
 
@@ -248,24 +248,29 @@ func NewBloomPass(device *wgpu.Device) (*render.Pass, error) {
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("bloom: upsample pipeline: %w", err)
+		return nil, nil, fmt.Errorf("bloom: upsample pipeline: %w", err)
 	}
 	state.upsamplePipeline = upsamplePipeline
 
-	return &render.Pass{
+	bloomPass := &render.Pass{
 		Name:                 "bloom",
 		Reads:                []string{"input"},
 		Writes:               []string{"output"},
-		State:                state,
-		Prepare:              bloomPrepare,
-		Execute:              bloomExecute,
-		InvalidateBindGroups: bloomInvalidate,
-		Release:              bloomRelease,
-	}, nil
+		Prepare:              func(c *render.PassContext) error { return bloomPrepare(state, c) },
+		Execute:              func(c *render.PassContext) error { return bloomExecute(state, c) },
+		InvalidateBindGroups: func() { bloomInvalidate(state) },
+		Release:              func() { bloomRelease(state) },
+	}
+	mipView := func() *wgpu.TextureView {
+		if len(state.mipViews) == 0 {
+			return nil
+		}
+		return state.mipViews[0]
+	}
+	return bloomPass, mipView, nil
 }
 
-func bloomPrepare(s any, context *render.PassContext) error {
-	state := s.(*bloomPassState)
+func bloomPrepare(state *bloomPassState, context *render.PassContext) error {
 
 	inputView, err := context.TextureView("input")
 	if err != nil {
@@ -342,8 +347,7 @@ func bloomPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func bloomExecute(s any, context *render.PassContext) error {
-	state := s.(*bloomPassState)
+func bloomExecute(state *bloomPassState, context *render.PassContext) error {
 	if state.current[0] == 0 || len(state.mipViews) == 0 {
 		return nil
 	}
@@ -391,8 +395,7 @@ func bloomExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func bloomInvalidate(s any) {
-	state := s.(*bloomPassState)
+func bloomInvalidate(state *bloomPassState) {
 	for index := range state.downsampleBg {
 		if state.downsampleBg[index] != nil {
 			state.downsampleBg[index].Release()
@@ -407,8 +410,7 @@ func bloomInvalidate(s any) {
 	state.upsampleBg = nil
 }
 
-func bloomRelease(s any) {
-	state := s.(*bloomPassState)
+func bloomRelease(state *bloomPassState) {
 	bloomInvalidate(state)
 	for index := range state.mipViews {
 		if state.mipViews[index] != nil {
@@ -506,24 +508,16 @@ func bloomBuildMipChain(state *bloomPassState, width, height uint32) error {
 	return nil
 }
 
-func BloomMipView(p *render.Pass) *wgpu.TextureView {
-	state, ok := p.State.(*bloomPassState)
-	if !ok || len(state.mipViews) == 0 {
-		return nil
-	}
-	return state.mipViews[0]
-}
-
-func AddBloomPass(renderer *render.Renderer) (*render.Pass, error) {
-	pass, err := NewBloomPass(renderer.Device)
+func AddBloomPass(renderer *render.Renderer) (*render.Pass, func() *wgpu.TextureView, error) {
+	pass, mipView, err := NewBloomPass(renderer.Device)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := renderer.Graph.AddPass(pass, []render.SlotBinding{
 		{Slot: "input", ResourceID: renderer.SceneColorID},
 		{Slot: "output", ResourceID: renderer.SceneColorID},
 	}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return pass, nil
+	return pass, mipView, nil
 }

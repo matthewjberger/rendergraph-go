@@ -110,8 +110,7 @@ func newSsaoBlurState(device *wgpu.Device, owner *ssaoPassState) (*ssaoBlurPassS
 	}, nil
 }
 
-func ssaoBlurPrepare(s any, context *render.PassContext) error {
-	state := s.(*ssaoBlurPassState)
+func ssaoBlurPrepare(state *ssaoBlurPassState, context *render.PassContext) error {
 	width, height, err := ssaoSize(context, "depth")
 	if err != nil {
 		return err
@@ -168,8 +167,7 @@ func ssaoBlurPrepare(s any, context *render.PassContext) error {
 	return nil
 }
 
-func ssaoBlurExecute(s any, context *render.PassContext) error {
-	state := s.(*ssaoBlurPassState)
+func ssaoBlurExecute(state *ssaoBlurPassState, context *render.PassContext) error {
 	if state.outputView == nil || state.bindGroup == nil {
 		return nil
 	}
@@ -190,16 +188,14 @@ func ssaoBlurExecute(s any, context *render.PassContext) error {
 	return nil
 }
 
-func ssaoBlurInvalidate(s any) {
-	state := s.(*ssaoBlurPassState)
+func ssaoBlurInvalidate(state *ssaoBlurPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 		state.bindGroup = nil
 	}
 }
 
-func ssaoBlurRelease(s any) {
-	state := s.(*ssaoBlurPassState)
+func ssaoBlurRelease(state *ssaoBlurPassState) {
 	if state.bindGroup != nil {
 		state.bindGroup.Release()
 	}
