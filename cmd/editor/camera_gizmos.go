@@ -18,6 +18,24 @@ const (
 	cameraUpTriangleSize = 0.18
 )
 
+// cameraGizmoPickExtents returns the world-space extents of an
+// invisible unit-cube child that covers the visible camera gizmo
+// (body + lens) so a GPU pick at any pixel of the gizmo resolves
+// to the camera entity. Derived from the gizmo constants so the
+// click target tracks the gizmo body if those change.
+func cameraGizmoPickExtents() transform.Vec3 {
+	width := float32(cameraBodyHalfWidth * 2)
+	if w := float32(cameraLensRadius * 2); w > width {
+		width = w
+	}
+	height := float32(cameraBodyHalfHeight * 2)
+	if h := float32(cameraLensRadius * 2); h > height {
+		height = h
+	}
+	depth := float32(cameraBodyDepth + cameraLensLength)
+	return transform.Vec3{width, height, depth}
+}
+
 // drawCameraGizmos walks render.CameraMarker entities and appends
 // a wireframe pyramid + lens cone + "up" triangle to the engine's
 // Lines resource. The pattern mirrors the lamp gizmo a standard

@@ -27,7 +27,7 @@ func spawnCameraPickProxy(engine *ecs.World, camera ecs.Entity) {
 		ecs.MustMaskOf[render.PickProxy](engine)
 	proxy := engine.Spawn(mask)
 	local := transform.IdentityLocalTransform()
-	local.Scale = transform.Vec3{0.45, 0.30, 0.55}
+	local.Scale = cameraGizmoPickExtents()
 	ecs.Set(engine, proxy, local)
 	ecs.Set(engine, proxy, transform.IdentityGlobalTransform())
 	ecs.Set(engine, proxy, transform.Parent{Entity: camera})
