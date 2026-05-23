@@ -23,9 +23,18 @@ type skinnedUniforms struct {
 	AmbientColor   mgl32.Vec4
 }
 
+type skinnedMaterial struct {
+	BaseColor [4]float32
+	BaseLayer uint32
+	Pad0      uint32
+	Pad1      uint32
+	Pad2      uint32
+}
+
 type skinnedHandleBuffers struct {
 	entityIdBuffer *wgpu.Buffer
 	entityCapacity uint32
+	materialBuffer *wgpu.Buffer
 	bindGroup      *wgpu.BindGroup
 }
 
@@ -98,11 +107,26 @@ func newSkinnedMeshState(device *wgpu.Device, aspect func() float32) (*skinnedMe
 	}
 	globalLayout, err := device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
 		Label: "skinned_mesh global layout",
-		Entries: []wgpu.BindGroupLayoutEntry{{
-			Binding:    0,
-			Visibility: wgpu.ShaderStageFragment,
-			Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeUniform},
-		}},
+		Entries: []wgpu.BindGroupLayoutEntry{
+			{
+				Binding:    0,
+				Visibility: wgpu.ShaderStageFragment,
+				Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeUniform},
+			},
+			{
+				Binding:    1,
+				Visibility: wgpu.ShaderStageFragment,
+				Texture: wgpu.TextureBindingLayout{
+					SampleType:    wgpu.TextureSampleTypeFloat,
+					ViewDimension: wgpu.TextureViewDimension2DArray,
+				},
+			},
+			{
+				Binding:    2,
+				Visibility: wgpu.ShaderStageFragment,
+				Sampler:    wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering},
+			},
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("skinned_mesh: global layout: %w", err)
@@ -112,6 +136,7 @@ func newSkinnedMeshState(device *wgpu.Device, aspect func() float32) (*skinnedMe
 		Entries: []wgpu.BindGroupLayoutEntry{
 			{Binding: 0, Visibility: wgpu.ShaderStageVertex, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage}},
 			{Binding: 1, Visibility: wgpu.ShaderStageVertex, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage}},
+			{Binding: 2, Visibility: wgpu.ShaderStageFragment, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeUniform}},
 		},
 	})
 	if err != nil {
@@ -209,14 +234,6 @@ func newSkinnedMeshState(device *wgpu.Device, aspect func() float32) (*skinnedMe
 	if err != nil {
 		return nil, fmt.Errorf("skinned_mesh: uniforms buffer: %w", err)
 	}
-	globalGroup, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-		Label:   "skinned_mesh global bg",
-		Layout:  globalLayout,
-		Entries: []wgpu.BindGroupEntry{{Binding: 0, Buffer: uniformBuffer, Offset: 0, Size: uint64(unsafe.Sizeof(skinnedUniforms{}))}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("skinned_mesh: global bg: %w", err)
-	}
 
 	return &skinnedMeshPassState{
 		pipeline:       pipeline,
@@ -226,7 +243,6 @@ func newSkinnedMeshState(device *wgpu.Device, aspect func() float32) (*skinnedMe
 		viewProjBuffer: viewProjBuffer,
 		viewProjGroup:  viewProjGroup,
 		uniformBuffer:  uniformBuffer,
-		globalGroup:    globalGroup,
 		aspectFn:       aspect,
 		perEntity:      make(map[ecs.Entity]*skinnedHandleBuffers),
 	}, nil
@@ -264,6 +280,27 @@ func skinnedMeshPrepare(s any, context *render.PassContext) error {
 	})
 	writeBuffer(context.Device, context.Queue, context.Encoder, state.uniformBuffer, 0, bytesOf(&uniforms))
 
+	if state.globalGroup == nil {
+		arraysResource, ok := ecs.Resource[asset.MaterialTextureArraysResource](context.World)
+		if !ok || arraysResource == nil || arraysResource.Arrays == nil {
+			return fmt.Errorf("skinned_mesh: MaterialTextureArraysResource missing")
+		}
+		arrays := arraysResource.Arrays
+		bg, err := context.Device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+			Label:  "skinned_mesh global bg",
+			Layout: state.globalLayout,
+			Entries: []wgpu.BindGroupEntry{
+				{Binding: 0, Buffer: state.uniformBuffer, Offset: 0, Size: uint64(unsafe.Sizeof(skinnedUniforms{}))},
+				{Binding: 1, TextureView: arrays.SRGBView},
+				{Binding: 2, Sampler: arrays.Sampler},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("skinned_mesh: global bg: %w", err)
+		}
+		state.globalGroup = bg
+	}
+
 	skinnedMask := ecs.MustMaskOf[asset.SkinnedMesh](context.World) |
 		ecs.MustMaskOf[transform.GlobalTransform](context.World)
 	context.World.ForEach(skinnedMask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {
@@ -282,6 +319,17 @@ func skinnedMeshPrepare(s any, context *render.PassContext) error {
 		}
 		id := uint32(entity.ID)
 		writeBuffer(context.Device, context.Queue, context.Encoder, buffers.entityIdBuffer, 0, bytesOf(&id))
+
+		matData := skinnedMaterial{
+			BaseColor: [4]float32{1, 1, 1, 1},
+			BaseLayer: 0xFFFFFFFF,
+		}
+		if material, ok := ecs.Get[asset.Material](context.World, entity); ok && material != nil {
+			matData.BaseColor = material.BaseColor
+			matData.BaseLayer = material.BaseColorLayer
+		}
+		writeBuffer(context.Device, context.Queue, context.Encoder, buffers.materialBuffer, 0, bytesOf(&matData))
+
 		if buffers.bindGroup == nil {
 			bg, err := context.Device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 				Label:  "skinned_mesh handle bg",
@@ -289,6 +337,7 @@ func skinnedMeshPrepare(s any, context *render.PassContext) error {
 				Entries: []wgpu.BindGroupEntry{
 					{Binding: 0, Buffer: skinned.Skin.JointMatrixBuffer, Offset: 0, Size: wgpu.WholeSize},
 					{Binding: 1, Buffer: buffers.entityIdBuffer, Offset: 0, Size: wgpu.WholeSize},
+					{Binding: 2, Buffer: buffers.materialBuffer, Offset: 0, Size: uint64(unsafe.Sizeof(skinnedMaterial{}))},
 				},
 			})
 			if err != nil {
@@ -371,6 +420,9 @@ func skinnedMeshRelease(s any) {
 		if buffers.entityIdBuffer != nil {
 			buffers.entityIdBuffer.Release()
 		}
+		if buffers.materialBuffer != nil {
+			buffers.materialBuffer.Release()
+		}
 		delete(state.perEntity, entity)
 	}
 	if state.globalGroup != nil {
@@ -400,6 +452,18 @@ func skinnedMeshRelease(s any) {
 }
 
 func ensureSkinnedBuffers(buffers *skinnedHandleBuffers, device *wgpu.Device, count uint32) error {
+	if buffers.materialBuffer == nil {
+		buf, err := device.CreateBuffer(&wgpu.BufferDescriptor{
+			Label: "skinned_mesh material buffer",
+			Size:  uint64(unsafe.Sizeof(skinnedMaterial{})),
+			Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
+		})
+		if err != nil {
+			return err
+		}
+		buffers.materialBuffer = buf
+		buffers.bindGroup = nil
+	}
 	if buffers.entityCapacity < count {
 		if buffers.entityIdBuffer != nil {
 			buffers.entityIdBuffer.Release()

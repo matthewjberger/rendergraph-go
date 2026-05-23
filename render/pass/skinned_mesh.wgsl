@@ -1,7 +1,9 @@
 // Skinned mesh shader. Vertex stage blends position + normal by
-// up to 4 joint matrices per vertex; fragment stage does a basic
-// directional + ambient lit shading (the full PBR + shadow path
-// is a follow-up). Output lands in scene_color so the postprocess
+// up to 4 joint matrices per vertex (matching the reference
+// engine's per-influence accumulation form); fragment stage
+// samples the material's base color texture from the shared
+// material texture array and shades with a basic Lambert +
+// ambient model. Output lands in scene_color so the postprocess
 // chain (SSAO, bloom, tonemap) still applies.
 
 struct ViewProj {
@@ -16,9 +18,21 @@ struct SkinnedUniforms {
     ambient_color:   vec4<f32>,
 };
 
-@group(1) @binding(0) var<uniform>       skinned_uniforms: SkinnedUniforms;
+@group(1) @binding(0) var<uniform> skinned_uniforms: SkinnedUniforms;
+@group(1) @binding(1) var material_srgb_array: texture_2d_array<f32>;
+@group(1) @binding(2) var material_sampler:    sampler;
+
+struct SkinnedMaterial {
+    base_color: vec4<f32>,
+    base_layer: u32,
+    _pad0:      u32,
+    _pad1:      u32,
+    _pad2:      u32,
+};
+
 @group(2) @binding(0) var<storage, read> joint_matrices: array<mat4x4<f32>>;
 @group(2) @binding(1) var<storage, read> entity_ids:     array<u32>;
+@group(2) @binding(2) var<uniform>       material:       SkinnedMaterial;
 
 struct VertexInput {
     @location(0) position:      vec4<f32>,
@@ -34,7 +48,8 @@ struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) world_normal: vec3<f32>,
     @location(1) color: vec4<f32>,
-    @location(2) @interpolate(flat) entity_id: u32,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) entity_id: u32,
 };
 
 struct FragmentOutput {
@@ -43,17 +58,16 @@ struct FragmentOutput {
     @location(2) view_normal: vec4<f32>,
 };
 
+const NO_TEXTURE_LAYER: u32 = 0xFFFFFFFFu;
+
 @vertex
 fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32) -> VertexOutput {
     // Per glTF spec: when a node has a skin, the node's own
     // transform is ignored -- joint matrices already encode every
-    // bind-pose-to-world transformation. Mirrors the reference
-    // engine, which also drops the mesh model matrix.
-    //
-    // The per-influence accumulation form (weight * (M * pos)
-    // summed over four influences) is mathematically equivalent
-    // to (sum(weight * M)) * pos but plays nicer with non-
-    // affine joint matrices.
+    // bind-pose-to-world transformation. Per-influence
+    // accumulation form (weight * (M * pos) summed over 4) is
+    // mathematically equivalent to (sum(weight * M)) * pos but
+    // plays nicer with non-affine joint matrices.
     let position = vec4<f32>(input.position.xyz, 1.0);
     let normal = input.normal.xyz;
     var skinned_position = vec3<f32>(0.0, 0.0, 0.0);
@@ -80,18 +94,26 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32)
     out.clip_position = view_proj_uniform.view_proj * vec4<f32>(skinned_position, 1.0);
     out.world_normal = skinned_normal;
     out.color = input.color;
+    out.uv = input.uv.xy;
     out.entity_id = entity_ids[instance_index];
     return out;
 }
 
 @fragment
 fn fragment_main(in: VertexOutput) -> FragmentOutput {
+    var base_color = material.base_color;
+    if (material.base_layer != NO_TEXTURE_LAYER) {
+        let layer = i32(material.base_layer & 0xFFFFu);
+        let sampled = textureSample(material_srgb_array, material_sampler, in.uv, layer);
+        base_color = base_color * sampled;
+    }
+    let albedo = base_color.rgb * in.color.rgb;
     let normal = normalize(in.world_normal);
     let light_dir = -normalize(skinned_uniforms.light_direction.xyz);
     let lambert = max(dot(normal, light_dir), 0.0);
     let lit = skinned_uniforms.ambient_color.rgb + skinned_uniforms.light_color.rgb * lambert;
     var out: FragmentOutput;
-    out.color = vec4<f32>(in.color.rgb * lit, in.color.a);
+    out.color = vec4<f32>(albedo * lit, base_color.a * in.color.a);
     out.entity_id = in.entity_id;
     out.view_normal = vec4<f32>(normal, 1.0);
     return out;
