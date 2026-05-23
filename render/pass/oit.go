@@ -161,7 +161,14 @@ func newOitMeshState(device *wgpu.Device, aspect func() float32) (*oitMeshPassSt
 		DepthStencil: &wgpu.DepthStencilState{
 			Format:            render.DepthFormat,
 			DepthWriteEnabled: false,
-			DepthCompare:      wgpu.CompareFunctionLess,
+			// LessEqual so transparent fragments co-planar with
+			// opaque geometry still pass (matches the reference
+			// engine's GreaterEqual under inverse-Z). Less would
+			// reject every transparent fragment whose depth ties
+			// the wall behind it -- the AlphaBlendModeTest blend
+			// rectangles sit at the exact same z as the test
+			// card's marble surface, so Less drops them all.
+			DepthCompare: wgpu.CompareFunctionLessEqual,
 			StencilFront: wgpu.StencilFaceState{
 				Compare:     wgpu.CompareFunctionAlways,
 				FailOp:      wgpu.StencilOperationKeep,
@@ -337,13 +344,15 @@ func oitMeshExecute(s any, context *render.PassContext) error {
 	if err != nil {
 		return err
 	}
-	// OIT reads depth but must not write it; flip the attachment.
+	// OIT reads depth but the pipeline's depth_write_enabled is
+	// false so it never actually writes. Don't set ReadOnly: per
+	// WebGPU spec that requires LoadOp/StoreOp to be undefined,
+	// which the reference engine sidesteps by just leaving plain
+	// Load/Store and letting the pipeline state control writes.
 	depth.DepthLoadOp = wgpu.LoadOpLoad
 	depth.DepthStoreOp = wgpu.StoreOpStore
-	depth.DepthReadOnly = true
 	depth.StencilLoadOp = wgpu.LoadOpLoad
 	depth.StencilStoreOp = wgpu.StoreOpStore
-	depth.StencilReadOnly = true
 
 	passEnc := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		Label:                  "oit_mesh",
