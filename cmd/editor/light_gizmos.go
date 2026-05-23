@@ -6,8 +6,8 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 
 	"github.com/matthewjberger/indigo/ecs"
+	"github.com/matthewjberger/indigo/internal/render/pass"
 	"github.com/matthewjberger/indigo/render"
-	"github.com/matthewjberger/indigo/render/pass"
 	"github.com/matthewjberger/indigo/transform"
 )
 

@@ -6,9 +6,9 @@ import (
 
 	"github.com/matthewjberger/indigo/app"
 	"github.com/matthewjberger/indigo/ecs"
+	"github.com/matthewjberger/indigo/internal/render/pass"
 	"github.com/matthewjberger/indigo/render"
 	"github.com/matthewjberger/indigo/render/asset"
-	"github.com/matthewjberger/indigo/render/pass"
 	"github.com/matthewjberger/indigo/transform"
 	"github.com/matthewjberger/indigo/ui"
 	"github.com/matthewjberger/indigo/window"
