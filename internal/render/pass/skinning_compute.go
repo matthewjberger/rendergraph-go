@@ -425,7 +425,7 @@ func (sc *SkinningCompute) uploadInstances(device *wgpu.Device, queue *wgpu.Queu
 		sc.instancesCap = count
 		sc.instancesGen++
 	}
-	writeBuffer(device, queue, encoder, sc.instancesBuffer, 0, unsafe.Slice((*byte)(unsafe.Pointer(&sc.instances[0])), count*int(unsafe.Sizeof(SkinnedInstance{}))))
+	writeBuffer(device, queue, encoder, sc.instancesBuffer, 0, sliceBytes(sc.instances[:count]))
 }
 
 func (sc *SkinningCompute) collectBoneTransforms(world *ecs.World) {
@@ -580,14 +580,14 @@ func matrixSliceBytes(matrices []mgl32.Mat4) []byte {
 	if len(matrices) == 0 {
 		return nil
 	}
-	return unsafe.Slice((*byte)(unsafe.Pointer(&matrices[0])), len(matrices)*int(matrixBytes))
+	return sliceBytes(matrices)
 }
 
 func skinDataBytes(data []GpuSkinData) []byte {
 	if len(data) == 0 {
 		return nil
 	}
-	return unsafe.Slice((*byte)(unsafe.Pointer(&data[0])), len(data)*int(unsafe.Sizeof(GpuSkinData{})))
+	return sliceBytes(data)
 }
 
 func putUint64(scratch *[8]byte, value uint64) {

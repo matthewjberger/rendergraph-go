@@ -211,7 +211,7 @@ func newSsaoState(device *wgpu.Device, aspect func() float32) (*ssaoPassState, e
 	if err != nil {
 		return nil, fmt.Errorf("ssao: kernel buffer: %w", err)
 	}
-	kernelBytes := unsafe.Slice((*byte)(unsafe.Pointer(&kernel[0])), len(kernel)*16)
+	kernelBytes := sliceBytes(kernel)
 	device.GetQueue().WriteBuffer(kernelBuffer, 0, kernelBytes)
 
 	noise := buildSsaoNoise()

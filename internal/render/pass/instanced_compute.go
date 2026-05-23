@@ -187,7 +187,7 @@ func (ic *InstancedCompute) prepare(world *ecs.World, device *wgpu.Device, queue
 			es.uniformBuffer = buf
 		}
 		if es.uploadedCount != count {
-			writeBuffer(device, queue, encoder, es.localBuffer, 0, unsafe.Slice((*byte)(unsafe.Pointer(&inst.Instances[0])), count*matBytes))
+			writeBuffer(device, queue, encoder, es.localBuffer, 0, sliceBytes(inst.Instances[:count]))
 			es.uploadedCount = count
 		}
 		cu := instancedComputeUniform{ParentTransform: global.Matrix, InstanceCount: uint32(count)}

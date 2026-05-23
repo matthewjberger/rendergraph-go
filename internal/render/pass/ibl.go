@@ -323,7 +323,7 @@ func captureProceduralCubemap(ibl *IBL, device *wgpu.Device, queue *wgpu.Queue) 
 	defer uniformBuf.Release()
 
 	uniform := proceduralUniform{OutputSize: ProceduralCubemapSize}
-	queue.WriteBuffer(uniformBuf, 0, unsafe.Slice((*byte)(unsafe.Pointer(&uniform)), unsafe.Sizeof(uniform)))
+	queue.WriteBuffer(uniformBuf, 0, bytesOf(&uniform))
 
 	layout, err := device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
 		Label: "procedural cubemap bgl",
@@ -554,7 +554,7 @@ func generateCubemapMipmaps(cubemap *wgpu.Texture, device *wgpu.Device, queue *w
 		}
 
 		params := mipParams{DstSize: dstSize}
-		queue.WriteBuffer(uniformBuf, 0, unsafe.Slice((*byte)(unsafe.Pointer(&params)), unsafe.Sizeof(params)))
+		queue.WriteBuffer(uniformBuf, 0, bytesOf(&params))
 
 		bindGroup, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 			Label:  "mipgen bind group",
@@ -783,7 +783,7 @@ func filterEnvironmentMap(ibl *IBL, device *wgpu.Device, queue *wgpu.Queue) erro
 	srcMipCount := mipLevelCount(ProceduralCubemapSize)
 
 	dispatchFilter := func(label string, view *wgpu.TextureView, params filterParams, outputSize uint32) error {
-		queue.WriteBuffer(uniformBuf, 0, unsafe.Slice((*byte)(unsafe.Pointer(&params)), unsafe.Sizeof(params)))
+		queue.WriteBuffer(uniformBuf, 0, bytesOf(&params))
 
 		bindGroup, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 			Label:  label + " bind group",

@@ -622,5 +622,5 @@ func animBytes[T any](items []T) []byte {
 	if len(items) == 0 {
 		return nil
 	}
-	return unsafe.Slice((*byte)(unsafe.Pointer(&items[0])), len(items)*int(unsafe.Sizeof(items[0])))
+	return sliceBytes(items)
 }

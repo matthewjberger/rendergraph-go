@@ -479,7 +479,7 @@ func lightsAsBytes(lights []LightGPU) []byte {
 	if len(lights) == 0 {
 		return nil
 	}
-	return unsafe.Slice((*byte)(unsafe.Pointer(&lights[0])), int(LightGPUSize)*len(lights))
+	return sliceBytes(lights)
 }
 
 func buildClusterUniforms(camera *render.Camera, aspect float32, context *render.PassContext, numDirectional, numLocal uint32) ClusterUniforms {
