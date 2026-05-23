@@ -38,6 +38,7 @@ var sharedMeshPassState atomic.Value
 //     [IBL] bundle the engine world owns.
 type meshPassState struct {
 	pipeline       *wgpu.RenderPipeline
+	depthPrepass   *depthPrepass
 	viewProjLayout *wgpu.BindGroupLayout
 	globalBgLayout *wgpu.BindGroupLayout
 	handleBgLayout *wgpu.BindGroupLayout
@@ -151,6 +152,12 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 		return nil, err
 	}
 	state.meshCulling = culling
+
+	prepass, err := newDepthPrepassPipeline(device, state.viewProjLayout, state.handleBgLayout, registry)
+	if err != nil {
+		return nil, err
+	}
+	state.depthPrepass = prepass
 
 	sharedMeshPassState.Store(state)
 

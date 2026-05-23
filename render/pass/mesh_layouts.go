@@ -285,8 +285,8 @@ func createMeshPipeline(
 		},
 		DepthStencil: &wgpu.DepthStencilState{
 			Format:            render.DepthFormat,
-			DepthWriteEnabled: true,
-			DepthCompare:      wgpu.CompareFunctionLess,
+			DepthWriteEnabled: meshMainDepthWrite,
+			DepthCompare:      meshMainDepthCompare,
 			StencilFront: wgpu.StencilFaceState{
 				Compare:     wgpu.CompareFunctionAlways,
 				FailOp:      wgpu.StencilOperationKeep,

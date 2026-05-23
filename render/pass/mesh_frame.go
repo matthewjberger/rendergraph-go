@@ -302,6 +302,31 @@ func meshExecute(s any, context *render.PassContext) error {
 		return err
 	}
 
+	if meshRunPrepass && state.depthPrepass != nil {
+		prepassDepth := depthAttachment
+		prepass := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
+			Label:                  "mesh depth prepass",
+			ColorAttachments:       []wgpu.RenderPassColorAttachment{},
+			DepthStencilAttachment: &prepassDepth,
+		})
+		prepass.SetPipeline(state.depthPrepass.pipeline)
+		prepass.SetBindGroup(0, state.viewProjBindGroup, nil)
+		prepass.SetBindGroup(2, state.depthPrepass.matsBg, nil)
+		for _, handle := range state.sortedHandles {
+			bucket := state.perHandle[handle]
+			entry, ok := assets.Lookup(handle)
+			if !ok {
+				continue
+			}
+			prepass.SetBindGroup(1, bucket.bindGroup, nil)
+			prepass.SetVertexBuffer(0, entry.Vertices, 0, wgpu.WholeSize)
+			drawHandle(prepass, bucket, entry.VertexCount, uint32(len(bucket.slotEntity)))
+		}
+		prepass.End()
+		prepass.Release()
+		depthAttachment.DepthLoadOp = wgpu.LoadOpLoad
+	}
+
 	pass := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		Label:                  "mesh",
 		ColorAttachments:       []wgpu.RenderPassColorAttachment{colorAttachment, entityIdAttachment, viewNormalsAttachment},
@@ -368,6 +393,9 @@ func meshRelease(s any) {
 	}
 	if state.pipeline != nil {
 		state.pipeline.Release()
+	}
+	if state.depthPrepass != nil {
+		state.depthPrepass.release()
 	}
 }
 
