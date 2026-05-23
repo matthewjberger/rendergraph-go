@@ -916,9 +916,14 @@ func buildSkinnedGltfPrimitive(doc *gltf.Document, prim *gltf.Primitive) ([]Skin
 }
 
 // readSkins extracts every glTF skin's joint node indices and
-// inverse-bind matrices. The matrices are stored column-major in
-// the glTF accessor; mgl32.Mat4 also stores column-major so the
-// raw bytes copy across unchanged.
+// inverse-bind matrices. Uses the dedicated
+// modeler.ReadInverseBindMatrices accessor so column-major
+// glTF storage decodes into [col][row]float32 as expected, then
+// reshuffles into the column-major flat layout mgl32.Mat4 uses.
+//
+// Pads the IBM slice up to len(joints) with identity matrices to
+// match the reference engine's behavior when a skin's IBM
+// accessor is short (or absent).
 func readSkins(doc *gltf.Document) ([]SkinSpec, error) {
 	if len(doc.Skins) == 0 {
 		return nil, nil
@@ -931,32 +936,38 @@ func readSkins(doc *gltf.Document) ([]SkinSpec, error) {
 		for j, jointNodeIdx := range skin.Joints {
 			spec.JointNodeIndices[j] = int(jointNodeIdx)
 		}
+		spec.InverseBindMatrices = make([]mgl32.Mat4, len(spec.JointNodeIndices))
+		for k := range spec.InverseBindMatrices {
+			spec.InverseBindMatrices[k] = mgl32.Ident4()
+		}
 		if skin.InverseBindMatrices != nil {
 			accessor := doc.Accessors[*skin.InverseBindMatrices]
-			matrices, err := modeler.ReadAccessor(doc, accessor, nil)
+			mats, err := modeler.ReadInverseBindMatrices(doc, accessor, nil)
 			if err != nil {
 				return nil, fmt.Errorf("skin %d: read inverse bind matrices: %w", skinIdx, err)
 			}
-			mats, ok := matrices.([][4][4]float32)
-			if !ok {
-				return nil, fmt.Errorf("skin %d: unexpected inverse-bind matrix type %T", skinIdx, matrices)
+			count := len(mats)
+			if count > len(spec.InverseBindMatrices) {
+				count = len(spec.InverseBindMatrices)
 			}
-			spec.InverseBindMatrices = make([]mgl32.Mat4, len(mats))
-			for k, m := range mats {
-				// glTF stores column-major in flat layout; the
-				// modeler decodes into [4][4] which mgl32.Mat4 also
-				// reads as column-major when copied via index.
+			for k := 0; k < count; k++ {
+				m := mats[k]
+				// modeler returns matrices as [row][col]float32:
+				// m[r][c] is the value at row r, column c. The
+				// modeler's own TestReadInverseBindMatrices verifies
+				// this -- a buffer storing column-major (col0, col1,
+				// col2, col3) of (1,0,0,0)(2,0,0,0)(3,0,0,0)(4,0,0,0)
+				// decodes to m[0]={1,2,3,4}, which is row 0.
+				//
+				// mgl32.Mat4 stores column-major flat (col 0 rows
+				// 0..3 at indices 0..3, col 1 at 4..7, etc.), so
+				// rearrange m[row][col] -> column-major flat.
 				spec.InverseBindMatrices[k] = mgl32.Mat4{
-					m[0][0], m[0][1], m[0][2], m[0][3],
-					m[1][0], m[1][1], m[1][2], m[1][3],
-					m[2][0], m[2][1], m[2][2], m[2][3],
-					m[3][0], m[3][1], m[3][2], m[3][3],
+					m[0][0], m[1][0], m[2][0], m[3][0],
+					m[0][1], m[1][1], m[2][1], m[3][1],
+					m[0][2], m[1][2], m[2][2], m[3][2],
+					m[0][3], m[1][3], m[2][3], m[3][3],
 				}
-			}
-		} else {
-			spec.InverseBindMatrices = make([]mgl32.Mat4, len(spec.JointNodeIndices))
-			for k := range spec.InverseBindMatrices {
-				spec.InverseBindMatrices[k] = mgl32.Ident4()
 			}
 		}
 		specs[skinIdx] = spec

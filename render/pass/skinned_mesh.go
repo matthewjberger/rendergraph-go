@@ -24,8 +24,6 @@ type skinnedUniforms struct {
 }
 
 type skinnedHandleBuffers struct {
-	modelBuffer    *wgpu.Buffer
-	modelCapacity  uint32
 	entityIdBuffer *wgpu.Buffer
 	entityCapacity uint32
 	bindGroup      *wgpu.BindGroup
@@ -114,7 +112,6 @@ func newSkinnedMeshState(device *wgpu.Device, aspect func() float32) (*skinnedMe
 		Entries: []wgpu.BindGroupLayoutEntry{
 			{Binding: 0, Visibility: wgpu.ShaderStageVertex, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage}},
 			{Binding: 1, Visibility: wgpu.ShaderStageVertex, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage}},
-			{Binding: 2, Visibility: wgpu.ShaderStageVertex, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage}},
 		},
 	})
 	if err != nil {
@@ -159,8 +156,18 @@ func newSkinnedMeshState(device *wgpu.Device, aspect func() float32) (*skinnedMe
 			Format:            render.DepthFormat,
 			DepthWriteEnabled: true,
 			DepthCompare:      wgpu.CompareFunctionLess,
-			StencilFront:      wgpu.StencilFaceState{Compare: wgpu.CompareFunctionAlways},
-			StencilBack:       wgpu.StencilFaceState{Compare: wgpu.CompareFunctionAlways},
+			StencilFront: wgpu.StencilFaceState{
+				Compare:     wgpu.CompareFunctionAlways,
+				FailOp:      wgpu.StencilOperationKeep,
+				DepthFailOp: wgpu.StencilOperationKeep,
+				PassOp:      wgpu.StencilOperationKeep,
+			},
+			StencilBack: wgpu.StencilFaceState{
+				Compare:     wgpu.CompareFunctionAlways,
+				FailOp:      wgpu.StencilOperationKeep,
+				DepthFailOp: wgpu.StencilOperationKeep,
+				PassOp:      wgpu.StencilOperationKeep,
+			},
 		},
 		Multisample: wgpu.MultisampleState{Count: 1, Mask: 0xFFFFFFFF},
 		Fragment: &wgpu.FragmentState{
@@ -273,8 +280,6 @@ func skinnedMeshPrepare(s any, context *render.PassContext) error {
 			delete(state.perEntity, entity)
 			return
 		}
-		global, _ := ecs.Get[transform.GlobalTransform](context.World, entity)
-		writeBuffer(context.Device, context.Queue, context.Encoder, buffers.modelBuffer, 0, bytesOf(&global.Matrix))
 		id := uint32(entity.ID)
 		writeBuffer(context.Device, context.Queue, context.Encoder, buffers.entityIdBuffer, 0, bytesOf(&id))
 		if buffers.bindGroup == nil {
@@ -282,9 +287,8 @@ func skinnedMeshPrepare(s any, context *render.PassContext) error {
 				Label:  "skinned_mesh handle bg",
 				Layout: state.handleLayout,
 				Entries: []wgpu.BindGroupEntry{
-					{Binding: 0, Buffer: buffers.modelBuffer, Offset: 0, Size: wgpu.WholeSize},
-					{Binding: 1, Buffer: skinned.Skin.JointMatrixBuffer, Offset: 0, Size: wgpu.WholeSize},
-					{Binding: 2, Buffer: buffers.entityIdBuffer, Offset: 0, Size: wgpu.WholeSize},
+					{Binding: 0, Buffer: skinned.Skin.JointMatrixBuffer, Offset: 0, Size: wgpu.WholeSize},
+					{Binding: 1, Buffer: buffers.entityIdBuffer, Offset: 0, Size: wgpu.WholeSize},
 				},
 			})
 			if err != nil {
@@ -364,9 +368,6 @@ func skinnedMeshRelease(s any) {
 		if buffers.bindGroup != nil {
 			buffers.bindGroup.Release()
 		}
-		if buffers.modelBuffer != nil {
-			buffers.modelBuffer.Release()
-		}
 		if buffers.entityIdBuffer != nil {
 			buffers.entityIdBuffer.Release()
 		}
@@ -399,29 +400,20 @@ func skinnedMeshRelease(s any) {
 }
 
 func ensureSkinnedBuffers(buffers *skinnedHandleBuffers, device *wgpu.Device, count uint32) error {
-	if buffers.modelCapacity < count {
-		if buffers.modelBuffer != nil {
-			buffers.modelBuffer.Release()
-		}
-		buf, err := device.CreateBuffer(&wgpu.BufferDescriptor{
-			Label: "skinned_mesh model buffer",
-			Size:  uint64(count) * uint64(unsafe.Sizeof(mgl32.Mat4{})),
-			Usage: wgpu.BufferUsageStorage | wgpu.BufferUsageCopyDst,
-		})
-		if err != nil {
-			return err
-		}
-		buffers.modelBuffer = buf
-		buffers.modelCapacity = count
-		buffers.bindGroup = nil
-	}
 	if buffers.entityCapacity < count {
 		if buffers.entityIdBuffer != nil {
 			buffers.entityIdBuffer.Release()
 		}
+		// Storage buffers need a minimum 16-byte allocation to be
+		// valid bind targets on every backend, even when the data
+		// is a single u32.
+		size := uint64(count) * 4
+		if size < 16 {
+			size = 16
+		}
 		buf, err := device.CreateBuffer(&wgpu.BufferDescriptor{
 			Label: "skinned_mesh entity_id buffer",
-			Size:  uint64(count) * 4,
+			Size:  size,
 			Usage: wgpu.BufferUsageStorage | wgpu.BufferUsageCopyDst,
 		})
 		if err != nil {

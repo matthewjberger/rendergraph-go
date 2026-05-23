@@ -17,9 +17,8 @@ struct SkinnedUniforms {
 };
 
 @group(1) @binding(0) var<uniform>       skinned_uniforms: SkinnedUniforms;
-@group(2) @binding(0) var<storage, read> models:           array<mat4x4<f32>>;
-@group(2) @binding(1) var<storage, read> joint_matrices:   array<mat4x4<f32>>;
-@group(2) @binding(2) var<storage, read> entity_ids:       array<u32>;
+@group(2) @binding(0) var<storage, read> joint_matrices: array<mat4x4<f32>>;
+@group(2) @binding(1) var<storage, read> entity_ids:     array<u32>;
 
 struct VertexInput {
     @location(0) position:      vec4<f32>,
@@ -46,24 +45,40 @@ struct FragmentOutput {
 
 @vertex
 fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32) -> VertexOutput {
-    let model = models[instance_index];
-
-    // The skin matrix is the per-vertex weighted blend of up to
-    // four joint matrices. Each joint matrix is the joint's world
-    // transform composed with its inverse-bind matrix, so applying
-    // it to the bind-pose vertex gives the animated world position.
-    let skin =
-        input.joint_weights.x * joint_matrices[input.joint_indices.x] +
-        input.joint_weights.y * joint_matrices[input.joint_indices.y] +
-        input.joint_weights.z * joint_matrices[input.joint_indices.z] +
-        input.joint_weights.w * joint_matrices[input.joint_indices.w];
-
-    let world = model * skin * vec4<f32>(input.position.xyz, 1.0);
-    let world_normal = (model * skin * vec4<f32>(input.normal.xyz, 0.0)).xyz;
+    // Per glTF spec: when a node has a skin, the node's own
+    // transform is ignored -- joint matrices already encode every
+    // bind-pose-to-world transformation. Mirrors the reference
+    // engine, which also drops the mesh model matrix.
+    //
+    // The per-influence accumulation form (weight * (M * pos)
+    // summed over four influences) is mathematically equivalent
+    // to (sum(weight * M)) * pos but plays nicer with non-
+    // affine joint matrices.
+    let position = vec4<f32>(input.position.xyz, 1.0);
+    let normal = input.normal.xyz;
+    var skinned_position = vec3<f32>(0.0, 0.0, 0.0);
+    var skinned_normal = vec3<f32>(0.0, 0.0, 0.0);
+    for (var index = 0u; index < 4u; index = index + 1u) {
+        let joint_index = input.joint_indices[index];
+        let joint_weight = input.joint_weights[index];
+        if (joint_weight > 0.0) {
+            let joint_matrix = joint_matrices[joint_index];
+            let transformed_pos = joint_matrix * position;
+            skinned_position = skinned_position + transformed_pos.xyz * joint_weight;
+            let normal_matrix = mat3x3<f32>(joint_matrix[0].xyz, joint_matrix[1].xyz, joint_matrix[2].xyz);
+            let transformed_normal = normal_matrix * normal;
+            skinned_normal = skinned_normal + transformed_normal * joint_weight;
+        }
+    }
+    if (length(skinned_normal) < 0.0001) {
+        skinned_normal = vec3<f32>(0.0, 0.0, 1.0);
+    } else {
+        skinned_normal = normalize(skinned_normal);
+    }
 
     var out: VertexOutput;
-    out.clip_position = view_proj_uniform.view_proj * world;
-    out.world_normal = world_normal;
+    out.clip_position = view_proj_uniform.view_proj * vec4<f32>(skinned_position, 1.0);
+    out.world_normal = skinned_normal;
     out.color = input.color;
     out.entity_id = entity_ids[instance_index];
     return out;

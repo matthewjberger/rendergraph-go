@@ -41,9 +41,13 @@ func spawnSkinnedDemo(worlds app.Worlds) {
 		return
 	}
 
+	// Joints carry the world-space position of the skinned mesh
+	// because the mesh entity's own transform is ignored by the
+	// skinning vertex shader (matches the glTF spec). Anchor the
+	// rig at (3, 0, -2) so it appears next to the orb cluster.
 	hingeAngle := float32(math.Pi / 3.5)
-	jointRoot := spawnSkinJoint(worlds, "Skin Root", transform.Vec3{0, 0, 0}, transform.QuatIdentity())
-	jointHinge := spawnSkinJoint(worlds, "Skin Hinge", transform.Vec3{0, 0.5, 0}, transform.QuatFromAxisAngle(hingeAngle, transform.Vec3{1, 0, 0}))
+	jointRoot := spawnSkinJoint(worlds, "Skin Root", transform.Vec3{3, 0, -2}, transform.QuatIdentity())
+	jointHinge := spawnSkinJoint(worlds, "Skin Hinge", transform.Vec3{3, 0.5, -2}, transform.QuatFromAxisAngle(hingeAngle, transform.Vec3{1, 0, 0}))
 
 	skin.Joints[0] = jointRoot
 	skin.Joints[1] = jointHinge
