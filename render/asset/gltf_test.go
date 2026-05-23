@@ -290,3 +290,96 @@ func TestDecodeDataURIRaw(t *testing.T) {
 }
 
 func ptrInt(v int) *int { return &v }
+
+func TestReadPunctualLightsAbsent(t *testing.T) {
+	doc := &gltf.Document{}
+	if got := readPunctualLights(doc); got != nil {
+		t.Fatalf("expected nil when extension absent, got %v", got)
+	}
+}
+
+func TestReadPunctualLightsDecodesTypes(t *testing.T) {
+	intensity := 12.5
+	rng := 9.0
+	body := []byte(`{"lights":[
+		{"name":"sun","type":"directional","color":[1,0.9,0.8]},
+		{"name":"bulb","type":"point","color":[0.5,0.5,1],"intensity":12.5,"range":9},
+		{"name":"flash","type":"spot","color":[1,1,1],"spot":{"innerConeAngle":0.2,"outerConeAngle":0.5}}
+	]}`)
+	_ = intensity
+	_ = rng
+	doc := &gltf.Document{Extensions: gltf.Extensions{"KHR_lights_punctual": body}}
+	lights := readPunctualLights(doc)
+	if len(lights) != 3 {
+		t.Fatalf("light count = %d, want 3", len(lights))
+	}
+	if lights[0].Type != LoadedLightDirectional {
+		t.Errorf("light[0] type = %v, want directional", lights[0].Type)
+	}
+	if lights[0].Color != [3]float32{1, 0.9, 0.8} {
+		t.Errorf("light[0] color = %v", lights[0].Color)
+	}
+	if lights[1].Type != LoadedLightPoint {
+		t.Errorf("light[1] type = %v, want point", lights[1].Type)
+	}
+	if lights[1].Intensity != 12.5 {
+		t.Errorf("light[1] intensity = %v, want 12.5", lights[1].Intensity)
+	}
+	if lights[1].Range != 9.0 {
+		t.Errorf("light[1] range = %v, want 9.0", lights[1].Range)
+	}
+	if lights[2].Type != LoadedLightSpot {
+		t.Errorf("light[2] type = %v, want spot", lights[2].Type)
+	}
+	if lights[2].InnerConeAngle != 0.2 || lights[2].OuterConeAngle != 0.5 {
+		t.Errorf("light[2] cone angles = (%v, %v)", lights[2].InnerConeAngle, lights[2].OuterConeAngle)
+	}
+}
+
+func TestReadCamerasDecodesPerspective(t *testing.T) {
+	zfar := 250.0
+	doc := &gltf.Document{
+		Cameras: []*gltf.Camera{
+			{Name: "main", Perspective: &gltf.Perspective{Yfov: 1.0, Znear: 0.5, Zfar: &zfar}},
+			{Name: "no_far", Perspective: &gltf.Perspective{Yfov: 0.5, Znear: 0.1}},
+		},
+	}
+	cams := readCameras(doc)
+	if len(cams) != 2 {
+		t.Fatalf("camera count = %d, want 2", len(cams))
+	}
+	if cams[0].Name != "main" || cams[0].FovYRadians != 1.0 || cams[0].Near != 0.5 || cams[0].Far != 250.0 {
+		t.Errorf("cam[0] = %+v", cams[0])
+	}
+	if cams[1].Far != 1000.0 {
+		t.Errorf("cam[1] missing Zfar should default to 1000, got %v", cams[1].Far)
+	}
+}
+
+func TestReadCamerasFallsBackForOrthographic(t *testing.T) {
+	doc := &gltf.Document{
+		Cameras: []*gltf.Camera{
+			{Name: "ortho"},
+		},
+	}
+	cams := readCameras(doc)
+	if len(cams) != 1 {
+		t.Fatalf("camera count = %d, want 1", len(cams))
+	}
+	if cams[0].Near != 0.1 || cams[0].Far != 1000 {
+		t.Errorf("ortho fallback = %+v", cams[0])
+	}
+}
+
+func TestReadNodeLightIndexFromExtension(t *testing.T) {
+	ext := gltf.Extensions{"KHR_lights_punctual": []byte(`{"light":3}`)}
+	if got := readNodeLightIndex(ext); got != 3 {
+		t.Errorf("got %d, want 3", got)
+	}
+}
+
+func TestReadNodeLightIndexAbsent(t *testing.T) {
+	if got := readNodeLightIndex(nil); got != -1 {
+		t.Errorf("got %d, want -1", got)
+	}
+}
