@@ -66,7 +66,7 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 	worlds.EngineSchedule.Push("pan_orbit_camera", render.UpdatePanOrbitCamera)
 	worlds.EngineSchedule.Push("animations", asset.UpdateAnimationPlayers)
 	worlds.EngineSchedule.Push("transform_propagation", transform.UpdateGlobalTransforms)
-	worlds.EngineSchedule.Push("skin_matrices", pass.PrepareSkinMatrices)
+	worlds.EngineSchedule.Push("skin_bones", pass.UploadSkinBones)
 	worlds.EngineSchedule.Push("bounding_volume_lines", pass.UpdateBoundingVolumeLines)
 	worlds.EngineSchedule.Push("normal_lines", pass.UpdateNormalLines)
 	worlds.EngineSchedule.Push("skeleton_lines", pass.UpdateSkeletonLines)
@@ -99,6 +99,13 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 func editorApp() *app.App {
 	return &app.App{
 		ConfigureRenderGraph: func(world *ecs.World, renderer *render.Renderer) {
+			skinning, err := pass.NewSkinningCompute(renderer.Device)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if _, err := pass.AddSkinningComputePass(renderer, skinning); err != nil {
+				log.Fatal(err)
+			}
 			if _, err := pass.AddSkyPass(renderer); err != nil {
 				log.Fatal(err)
 			}

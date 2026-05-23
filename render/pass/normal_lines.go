@@ -87,14 +87,22 @@ func UpdateNormalLines(world *ecs.World) {
 	skinnedMask := ecs.MustMaskOf[asset.SkinnedMesh](world)
 	world.ForEach(skinnedMask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {
 		skinned, _ := ecs.Get[asset.SkinnedMesh](world, entity)
-		if skinned == nil || skinned.Skin == nil || len(skinned.Skin.JointMatrices) == 0 {
+		if skinned == nil || skinned.Skin == nil || len(skinned.Skin.Joints) == 0 {
 			return
 		}
 		entry, ok := skinnedAssets.Lookup(skinned.Mesh)
 		if !ok || entry == nil || len(entry.CpuVertices) == 0 {
 			return
 		}
-		joints := skinned.Skin.JointMatrices
+		skin := skinned.Skin
+		joints := make([]mgl32.Mat4, len(skin.Joints))
+		for jointIndex, jointEntity := range skin.Joints {
+			if global, ok := ecs.Get[transform.GlobalTransform](world, jointEntity); ok {
+				joints[jointIndex] = global.Matrix.Mul4(skin.InverseBindMatrices[jointIndex])
+			} else {
+				joints[jointIndex] = skin.InverseBindMatrices[jointIndex]
+			}
+		}
 		for i := range entry.CpuVertices {
 			v := &entry.CpuVertices[i]
 			var pos mgl32.Vec3

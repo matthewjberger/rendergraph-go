@@ -497,39 +497,3 @@ func defaultSkinnedUniforms() skinnedUniforms {
 		AmbientColor:   mgl32.Vec4{0.15, 0.18, 0.22, 1},
 	}
 }
-
-// PrepareSkinMatrices walks every SkinnedMesh entity, builds the
-// joint matrix array from each joint's GlobalTransform and inverse
-// bind matrix, and uploads it to the skin's storage buffer.
-func PrepareSkinMatrices(world *ecs.World) {
-	if !ecs.HasResource[render.RendererResource](world) {
-		return
-	}
-	renderer := ecs.MustResource[render.RendererResource](world).Renderer
-	queue := renderer.Queue
-	mask := ecs.MustMaskOf[asset.SkinnedMesh](world)
-	world.ForEach(mask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {
-		skinned, _ := ecs.Get[asset.SkinnedMesh](world, entity)
-		if skinned == nil || skinned.Skin == nil {
-			return
-		}
-		skin := skinned.Skin
-		if len(skin.Joints) != len(skin.InverseBindMatrices) || len(skin.Joints) != len(skin.JointMatrices) {
-			return
-		}
-		for jointIndex, jointEntity := range skin.Joints {
-			global, ok := ecs.Get[transform.GlobalTransform](world, jointEntity)
-			if !ok {
-				skin.JointMatrices[jointIndex] = skin.InverseBindMatrices[jointIndex]
-				continue
-			}
-			skin.JointMatrices[jointIndex] = global.Matrix.Mul4(skin.InverseBindMatrices[jointIndex])
-		}
-		if len(skin.JointMatrices) == 0 {
-			return
-		}
-		bytesPerMatrix := int(unsafe.Sizeof(mgl32.Mat4{}))
-		data := unsafe.Slice((*byte)(unsafe.Pointer(&skin.JointMatrices[0])), len(skin.JointMatrices)*bytesPerMatrix)
-		queue.WriteBuffer(skin.JointMatrixBuffer, 0, data)
-	})
-}
