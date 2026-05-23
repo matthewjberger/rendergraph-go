@@ -620,6 +620,63 @@ func shadowDepthExecute(s any, context *render.PassContext) error {
 	}
 	assets := ecs.MustResource[asset.MeshAssetsResource](context.World).Assets
 
+	// Build + upload skinned joint-offset uniforms and bind groups
+	// before any render pass opens: writeBuffer encodes a buffer
+	// copy on wasm, which is illegal while a render pass is locked
+	// on the same encoder.
+	skinningRes, hasSkinning := ecs.Resource[SkinningComputeResource](context.World)
+	var skinnedAssets *asset.SkinnedMeshAssets
+	skinnedReady := false
+	if skinnedAssetsResource, ok := ecs.Resource[asset.SkinnedMeshAssetsResource](context.World); ok && skinnedAssetsResource != nil && skinnedAssetsResource.Assets != nil && hasSkinning && skinningRes != nil && skinningRes.Compute != nil && skinningRes.Compute.JointMatrixBuffer() != nil {
+		skinnedAssets = skinnedAssetsResource.Assets
+		skinning := skinningRes.Compute
+		jointBuffer := skinning.JointMatrixBuffer()
+		generation := skinning.Generation()
+		skinnedReady = true
+		skinnedMask := ecs.MustMaskOf[asset.SkinnedMesh](context.World)
+		context.World.ForEach(skinnedMask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {
+			skinned, _ := ecs.Get[asset.SkinnedMesh](context.World, entity)
+			if skinned == nil || skinned.Skin == nil {
+				return
+			}
+			entry := state.skinnedJointBindCache[entity]
+			if entry == nil {
+				offsetBuf, err := context.Device.CreateBuffer(&wgpu.BufferDescriptor{
+					Label: "shadow skinned joint offset",
+					Size:  16,
+					Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
+				})
+				if err != nil {
+					return
+				}
+				entry = &shadowSkinnedEntry{offsetBuffer: offsetBuf}
+				state.skinnedJointBindCache[entity] = entry
+			}
+			offset := [4]uint32{skinning.JointOffset(entity), 0, 0, 0}
+			writeBuffer(context.Device, context.Queue, context.Encoder, entry.offsetBuffer, 0, bytesOf(&offset))
+			if entry.bindGroup != nil && (entry.jointGen != generation || entry.jointBuffer != jointBuffer) {
+				entry.bindGroup.Release()
+				entry.bindGroup = nil
+			}
+			if entry.bindGroup == nil {
+				bg, err := context.Device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+					Label:  "shadow skinned handle bg",
+					Layout: state.skinnedHandleBgLayout,
+					Entries: []wgpu.BindGroupEntry{
+						{Binding: 0, Buffer: jointBuffer, Offset: 0, Size: wgpu.WholeSize},
+						{Binding: 1, Buffer: entry.offsetBuffer, Offset: 0, Size: 16},
+					},
+				})
+				if err != nil {
+					return
+				}
+				entry.bindGroup = bg
+				entry.jointGen = generation
+				entry.jointBuffer = jointBuffer
+			}
+		})
+	}
+
 	for cascade := 0; cascade < NumShadowCascades; cascade++ {
 		depthAttachment := wgpu.RenderPassDepthStencilAttachment{
 			View:              shadow.CascadeViews[cascade],
@@ -658,22 +715,13 @@ func shadowDepthExecute(s any, context *render.PassContext) error {
 		// Draw skinned mesh entities into the same cascade using
 		// the parallel skinned pipeline. The cascade view-proj
 		// bind group is layout-compatible across both pipelines
-		// (same group 0). Each skinned entity binds its own
-		// joint matrix storage buffer at group 1.
-		skinningRes, hasSkinning := ecs.Resource[SkinningComputeResource](context.World)
-		if skinnedAssetsResource, ok := ecs.Resource[asset.SkinnedMeshAssetsResource](context.World); ok && skinnedAssetsResource != nil && skinnedAssetsResource.Assets != nil && hasSkinning && skinningRes != nil && skinningRes.Compute != nil && skinningRes.Compute.JointMatrixBuffer() != nil {
-			skinnedAssets := skinnedAssetsResource.Assets
-			skinning := skinningRes.Compute
-			jointBuffer := skinning.JointMatrixBuffer()
-			generation := skinning.Generation()
-			skinnedMask := ecs.MustMaskOf[asset.SkinnedMesh](context.World)
+		// (same group 0). The per-entity joint-offset bind groups
+		// were built before this render pass opened.
+		if skinnedReady {
 			pass.SetPipeline(state.skinnedPipeline)
 			pass.SetBindGroup(0, state.cascadeBgs[cascade], nil)
-			var skinnedErr error
+			skinnedMask := ecs.MustMaskOf[asset.SkinnedMesh](context.World)
 			context.World.ForEach(skinnedMask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {
-				if skinnedErr != nil {
-					return
-				}
 				skinned, _ := ecs.Get[asset.SkinnedMesh](context.World, entity)
 				if skinned == nil || skinned.Skin == nil {
 					return
@@ -683,51 +731,13 @@ func shadowDepthExecute(s any, context *render.PassContext) error {
 					return
 				}
 				entry := state.skinnedJointBindCache[entity]
-				if entry == nil {
-					offsetBuf, err := context.Device.CreateBuffer(&wgpu.BufferDescriptor{
-						Label: "shadow skinned joint offset",
-						Size:  16,
-						Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
-					})
-					if err != nil {
-						skinnedErr = err
-						return
-					}
-					entry = &shadowSkinnedEntry{offsetBuffer: offsetBuf}
-					state.skinnedJointBindCache[entity] = entry
-				}
-				offset := [4]uint32{skinning.JointOffset(entity), 0, 0, 0}
-				writeBuffer(context.Device, context.Queue, context.Encoder, entry.offsetBuffer, 0, bytesOf(&offset))
-				if entry.bindGroup != nil && (entry.jointGen != generation || entry.jointBuffer != jointBuffer) {
-					entry.bindGroup.Release()
-					entry.bindGroup = nil
-				}
-				if entry.bindGroup == nil {
-					bg, err := context.Device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-						Label:  "shadow skinned handle bg",
-						Layout: state.skinnedHandleBgLayout,
-						Entries: []wgpu.BindGroupEntry{
-							{Binding: 0, Buffer: jointBuffer, Offset: 0, Size: wgpu.WholeSize},
-							{Binding: 1, Buffer: entry.offsetBuffer, Offset: 0, Size: 16},
-						},
-					})
-					if err != nil {
-						skinnedErr = err
-						return
-					}
-					entry.bindGroup = bg
-					entry.jointGen = generation
-					entry.jointBuffer = jointBuffer
+				if entry == nil || entry.bindGroup == nil {
+					return
 				}
 				pass.SetBindGroup(1, entry.bindGroup, nil)
 				pass.SetVertexBuffer(0, meshEntry.Vertices, 0, wgpu.WholeSize)
 				pass.Draw(meshEntry.VertexCount, 1, 0, 0)
 			})
-			if skinnedErr != nil {
-				pass.End()
-				pass.Release()
-				return skinnedErr
-			}
 		}
 
 		pass.End()

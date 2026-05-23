@@ -91,7 +91,7 @@ func AddSkinningComputePass(renderer *render.Renderer, sc *SkinningCompute) (*re
 		State: sc,
 		Execute: func(state any, context *render.PassContext) error {
 			compute := state.(*SkinningCompute)
-			if compute.Prepare(context.World, context.Device, context.Queue) {
+			if compute.Prepare(context.World, context.Device, context.Queue, context.Encoder) {
 				compute.Dispatch(context.Encoder)
 			}
 			return nil
@@ -344,7 +344,7 @@ func (sc *SkinningCompute) collectBoneTransforms(world *ecs.World) {
 // static data when the entity set changed, (re)allocates shared
 // buffers, uploads static + per-frame data. Returns false when
 // there are no skinned entities to dispatch.
-func (sc *SkinningCompute) Prepare(world *ecs.World, device *wgpu.Device, queue *wgpu.Queue) bool {
+func (sc *SkinningCompute) Prepare(world *ecs.World, device *wgpu.Device, queue *wgpu.Queue, encoder *wgpu.CommandEncoder) bool {
 	rebuilt := false
 	if sc.needsRebuild(world) {
 		sc.rebuildStaticData(world)
@@ -358,14 +358,14 @@ func (sc *SkinningCompute) Prepare(world *ecs.World, device *wgpu.Device, queue 
 	grew := sc.ensureBuffers(device)
 	if rebuilt || grew {
 		if len(sc.skinData) > 0 {
-			queue.WriteBuffer(sc.skinDataBuffer, 0, skinDataBytes(sc.skinData))
+			writeBuffer(device, queue, encoder, sc.skinDataBuffer, 0, skinDataBytes(sc.skinData))
 		}
 		if len(sc.inverseBindMatrices) > 0 {
-			queue.WriteBuffer(sc.ibmBuffer, 0, matrixSliceBytes(sc.inverseBindMatrices))
+			writeBuffer(device, queue, encoder, sc.ibmBuffer, 0, matrixSliceBytes(sc.inverseBindMatrices))
 		}
 	}
 	if len(sc.boneScratch) > 0 {
-		queue.WriteBuffer(sc.boneBuffer, 0, matrixSliceBytes(sc.boneScratch))
+		writeBuffer(device, queue, encoder, sc.boneBuffer, 0, matrixSliceBytes(sc.boneScratch))
 	}
 	if grew && sc.bindGroup != nil {
 		sc.bindGroup.Release()
