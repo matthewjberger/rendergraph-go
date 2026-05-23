@@ -78,7 +78,7 @@ type SsaoSettings struct {
 // fairly tight radius with a moderate sample count.
 func DefaultSsaoSettings() SsaoSettings {
 	return SsaoSettings{
-		Enabled:     true,
+		Enabled:     false,
 		Radius:      0.5,
 		Bias:        0.025,
 		Intensity:   1.5,

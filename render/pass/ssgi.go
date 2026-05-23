@@ -55,7 +55,7 @@ type SsgiSettings struct {
 // re-adding already-direct-lit pixels as indirect.
 func DefaultSsgiSettings() SsgiSettings {
 	return SsgiSettings{
-		Enabled:   true,
+		Enabled:   false,
 		Radius:    1.0,
 		Intensity: 0.25,
 		MaxSteps:  12,
