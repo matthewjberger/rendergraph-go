@@ -349,9 +349,28 @@ func collectOpaqueQuads(uiWorld *ecs.World) []opaqueQuad {
 		if node.Resolved.Width <= 0 || node.Resolved.Height <= 0 {
 			return
 		}
-		out = append(out, opaqueQuad{rect: node.Resolved, z: node.ZIndex})
+		// An occluder can only cover what is actually drawn, so clamp it to its
+		// clip region. Without this, a scroll-list row positioned outside its
+		// clipping viewport (e.g. the Khronos asset rows) would still cull text
+		// elsewhere on screen, such as the top-bar VIEWER label.
+		rect := node.Resolved
+		if node.ClipResolved.Width > 0 && node.ClipResolved.Height > 0 {
+			rect = intersectRect(rect, node.ClipResolved)
+			if rect.Width <= 0 || rect.Height <= 0 {
+				return
+			}
+		}
+		out = append(out, opaqueQuad{rect: rect, z: node.ZIndex})
 	})
 	return out
+}
+
+func intersectRect(a, b ui.Rect) ui.Rect {
+	x0 := max(a.X, b.X)
+	y0 := max(a.Y, b.Y)
+	x1 := min(a.X+a.Width, b.X+b.Width)
+	y1 := min(a.Y+a.Height, b.Y+b.Height)
+	return ui.Rect{X: x0, Y: y0, Width: x1 - x0, Height: y1 - y0}
 }
 
 func textCovered(textBounds ui.Rect, textZ int32, occluders []opaqueQuad) bool {

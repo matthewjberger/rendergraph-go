@@ -1011,9 +1011,19 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
     if (mat.clearcoat_roughness_layer != NO_LAYER) {
         cc_roughness = cc_roughness * sample_linear_layer(mat.clearcoat_roughness_layer, in.uv).g;
     }
+    var cc_normal = n;
+    if (mat.clearcoat_normal_layer != NO_LAYER) {
+        let cc_n_sample = sample_linear_layer(mat.clearcoat_normal_layer, in.uv).xyz;
+        let cc_n_tangent_xy = (cc_n_sample.xy * 2.0 - 1.0) * mat.clearcoat_normal_scale;
+        let cc_n_tangent = vec3<f32>(cc_n_tangent_xy, sqrt(max(1.0 - dot(cc_n_tangent_xy, cc_n_tangent_xy), 0.0)));
+        let cc_t = normalize(in.world_tangent.xyz);
+        let cc_b = cross(in.world_normal, cc_t) * in.world_tangent.w;
+        let cc_tbn = mat3x3<f32>(cc_t, cc_b, in.world_normal);
+        cc_normal = normalize(cc_tbn * cc_n_tangent);
+    }
     shade.cc_factor = cc_factor;
     shade.cc_roughness = cc_roughness;
-    shade.cc_normal = n;
+    shade.cc_normal = cc_normal;
 
     var lo = vec3<f32>(0.0);
 
@@ -1101,10 +1111,11 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
         if (mat.clearcoat_roughness_layer != NO_LAYER) {
             cc_rough = cc_rough * sample_linear_layer(mat.clearcoat_roughness_layer, in.uv).g;
         }
-        let cc_r = reflect(-v, n);
+        let cc_n_dot_v = max(dot(cc_normal, v), 0.0);
+        let cc_r = reflect(-v, cc_normal);
         let cc_prefiltered = textureSampleLevel(prefiltered_env, ibl_sampler, cc_r, cc_rough * MAX_REFLECTION_LOD).rgb;
-        let cc_f = fresnel_clearcoat(n_dot_v);
-        let cc_brdf = textureSampleLevel(brdf_lut, ibl_sampler, vec2<f32>(n_dot_v, cc_rough), 0.0).rg;
+        let cc_f = fresnel_clearcoat(cc_n_dot_v);
+        let cc_brdf = textureSampleLevel(brdf_lut, ibl_sampler, vec2<f32>(cc_n_dot_v, cc_rough), 0.0).rg;
         let cc_spec = cc * (cc_f * cc_brdf.x + cc_brdf.y) * cc_prefiltered;
         ambient = ambient * (1.0 - cc * cc_f) + cc_spec;
     }

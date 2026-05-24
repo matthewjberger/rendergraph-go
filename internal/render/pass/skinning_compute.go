@@ -40,9 +40,9 @@ type SkinnedInstance struct {
 	Dispersion          float32
 	Thickness           float32
 	AttenuationDistance float32
-	Pad0                float32
+	MaterialIndex       uint32
 	AttenuationColor    [3]float32
-	Pad1                float32
+	WorldScaleFactor    float32
 }
 
 const skinnedInstanceSize = uintptr(80)
@@ -360,10 +360,18 @@ func hashSkin(skin *asset.Skin) uint64 {
 	return hasher.Sum64()
 }
 
-func (sc *SkinningCompute) buildInstances(world *ecs.World) {
+func (sc *SkinningCompute) buildInstances(world *ecs.World, queue *wgpu.Queue) {
 	sc.instances = sc.instances[:0]
 	sc.opaqueGroups = sc.opaqueGroups[:0]
 	sc.blendGroups = sc.blendGroups[:0]
+
+	// Skinned meshes share the static mesh material registry so the OIT pass can
+	// shade them with the same full PBR path: the instance carries a material
+	// index into that registry rather than an inlined subset of material fields.
+	var registry *asset.MaterialRegistry
+	if resource, ok := ecs.Resource[asset.MaterialRegistryResource](world); ok && resource != nil {
+		registry = resource.Registry
+	}
 
 	type record struct {
 		instance    SkinnedInstance
@@ -378,13 +386,16 @@ func (sc *SkinningCompute) buildInstances(world *ecs.World) {
 			return
 		}
 		instance := SkinnedInstance{
-			BaseColor:   [4]float32{1, 1, 1, 1},
-			EntityID:    entity.ID,
-			JointOffset: sc.JointOffset(entity),
-			BaseLayer:   0xFFFFFFFF,
+			BaseColor:        [4]float32{1, 1, 1, 1},
+			EntityID:         entity.ID,
+			JointOffset:      sc.JointOffset(entity),
+			BaseLayer:        0xFFFFFFFF,
+			WorldScaleFactor: 1.0,
 		}
 		instance.IOR = 1.5
-		if material, ok := ecs.Get[asset.Material](world, entity); ok && material != nil {
+		material := asset.DefaultMaterial()
+		if existing, ok := ecs.Get[asset.Material](world, entity); ok && existing != nil {
+			material = *existing
 			instance.BaseColor = material.BaseColor
 			instance.BaseLayer = material.BaseColorLayer
 			instance.AlphaMode = uint32(material.ToGPU().AlphaMode)
@@ -398,6 +409,23 @@ func (sc *SkinningCompute) buildInstances(world *ecs.World) {
 			instance.Thickness = material.Thickness
 			instance.AttenuationDistance = material.AttenuationDistance
 			instance.AttenuationColor = material.AttenuationColor
+		}
+		if global, ok := ecs.Get[transform.GlobalTransform](world, entity); ok && global != nil {
+			matrix := global.Matrix
+			scaleX := mgl32.Vec3{matrix[0], matrix[1], matrix[2]}.Len()
+			scaleY := mgl32.Vec3{matrix[4], matrix[5], matrix[6]}.Len()
+			scaleZ := mgl32.Vec3{matrix[8], matrix[9], matrix[10]}.Len()
+			instance.WorldScaleFactor = (scaleX + scaleY + scaleZ) / 3.0
+		}
+		if registry != nil {
+			materialID, isNew := registry.AssignID(entity)
+			if isNew {
+				if _, err := registry.EnsureCapacity(registry.Count()); err != nil {
+					return
+				}
+			}
+			registry.Write(queue, materialID, material.ToGPU())
+			instance.MaterialIndex = materialID
 		}
 		records = append(records, record{instance: instance, mesh: sm.Mesh, transparent: instance.AlphaMode == 2 || instance.TransmissionFactor > 0})
 	})
@@ -481,7 +509,7 @@ func (sc *SkinningCompute) Prepare(world *ecs.World, device *wgpu.Device, queue 
 		return false
 	}
 
-	sc.buildInstances(world)
+	sc.buildInstances(world, queue)
 	sc.uploadInstances(device, queue, encoder)
 
 	sc.collectBoneTransforms(world)

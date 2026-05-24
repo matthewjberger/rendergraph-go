@@ -6,7 +6,6 @@ import (
 	"unsafe"
 
 	"github.com/cogentcore/webgpu/wgpu"
-	"github.com/go-gl/mathgl/mgl32"
 
 	"github.com/matthewjberger/indigo/ecs"
 	"github.com/matthewjberger/indigo/render"
@@ -16,29 +15,16 @@ import (
 //go:embed skinned_mesh_oit.wgsl
 var skinnedMeshOitShader string
 
-type skinnedOitViewProj struct {
-	ViewProj       mgl32.Mat4
-	CameraPosition mgl32.Vec4
-	ZScale         float32
-	Pad0           float32
-	Pad1           float32
-	Pad2           float32
-}
-
+// skinnedMeshOitState renders blend and transmissive skinned meshes through the
+// same full PBR + screen-space transmission path as the static OIT pass. It
+// reuses the forward mesh pass's view-proj, global (lights/shadows/material
+// registry/texture arrays) and IBL bind groups verbatim; only group 2 is
+// skinned-specific (joint matrices + per-instance data that indexes the shared
+// material registry).
 type skinnedMeshOitState struct {
 	pipeline        *wgpu.RenderPipeline
 	prepassPipeline *wgpu.RenderPipeline
-	viewProjLayout  *wgpu.BindGroupLayout
-	globalLayout    *wgpu.BindGroupLayout
 	handleLayout    *wgpu.BindGroupLayout
-	iblLayout       *wgpu.BindGroupLayout
-	viewProjBuffer  *wgpu.Buffer
-	viewProjGroup   *wgpu.BindGroup
-	uniformBuffer   *wgpu.Buffer
-	globalGroup     *wgpu.BindGroup
-	iblGroup        *wgpu.BindGroup
-	lastTransView   *wgpu.TextureView
-	aspectFn        func() float32
 
 	handleBindGroup *wgpu.BindGroup
 	jointGen        uint64
@@ -48,7 +34,7 @@ type skinnedMeshOitState struct {
 }
 
 func AddSkinnedMeshOitPass(renderer *render.Renderer) (*render.Pass, error) {
-	state, err := newSkinnedMeshOitState(renderer.Device, renderer.AspectRatio)
+	state, err := newSkinnedMeshOitState(renderer.Device)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +57,12 @@ func AddSkinnedMeshOitPass(renderer *render.Renderer) (*render.Pass, error) {
 	return pass, nil
 }
 
-func newSkinnedMeshOitState(device *wgpu.Device, aspect func() float32) (*skinnedMeshOitState, error) {
+func newSkinnedMeshOitState(device *wgpu.Device) (*skinnedMeshOitState, error) {
+	meshState, ok := findMeshPassState(nil)
+	if !ok {
+		return nil, fmt.Errorf("skinned_mesh_oit: mesh pass must be created before the skinned OIT pass")
+	}
+
 	module, err := device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
 		Label:          "skinned_mesh_oit shader",
 		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{Code: skinnedMeshOitShader},
@@ -81,70 +72,45 @@ func newSkinnedMeshOitState(device *wgpu.Device, aspect func() float32) (*skinne
 	}
 	defer module.Release()
 
-	viewProjLayout, err := device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
-		Label: "skinned_mesh_oit view_proj layout",
-		Entries: []wgpu.BindGroupLayoutEntry{{
-			Binding:    0,
-			Visibility: wgpu.ShaderStageVertex | wgpu.ShaderStageFragment,
-			Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeUniform},
-		}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("skinned_mesh_oit: view_proj layout: %w", err)
-	}
-	globalLayout, err := device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
-		Label: "skinned_mesh_oit global layout",
-		Entries: []wgpu.BindGroupLayoutEntry{
-			{Binding: 0, Visibility: wgpu.ShaderStageFragment, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeUniform}},
-			{Binding: 1, Visibility: wgpu.ShaderStageFragment, Texture: wgpu.TextureBindingLayout{SampleType: wgpu.TextureSampleTypeFloat, ViewDimension: wgpu.TextureViewDimension2DArray}},
-			{Binding: 2, Visibility: wgpu.ShaderStageFragment, Sampler: wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering}},
-		},
-	})
-	if err != nil {
-		viewProjLayout.Release()
-		return nil, fmt.Errorf("skinned_mesh_oit: global layout: %w", err)
-	}
 	handleLayout, err := device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
 		Label: "skinned_mesh_oit handle layout",
 		Entries: []wgpu.BindGroupLayoutEntry{
 			{Binding: 0, Visibility: wgpu.ShaderStageVertex, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage}},
-			{Binding: 1, Visibility: wgpu.ShaderStageVertex | wgpu.ShaderStageFragment, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage}},
+			{Binding: 1, Visibility: wgpu.ShaderStageVertex, Buffer: wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage}},
 		},
 	})
 	if err != nil {
-		viewProjLayout.Release()
-		globalLayout.Release()
 		return nil, fmt.Errorf("skinned_mesh_oit: handle layout: %w", err)
-	}
-	iblLayout, err := device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
-		Label: "skinned_mesh_oit ibl layout",
-		Entries: []wgpu.BindGroupLayoutEntry{
-			{Binding: 0, Visibility: wgpu.ShaderStageFragment, Texture: wgpu.TextureBindingLayout{SampleType: wgpu.TextureSampleTypeFloat, ViewDimension: wgpu.TextureViewDimensionCube}},
-			{Binding: 1, Visibility: wgpu.ShaderStageFragment, Texture: wgpu.TextureBindingLayout{SampleType: wgpu.TextureSampleTypeFloat, ViewDimension: wgpu.TextureViewDimension2D}},
-			{Binding: 2, Visibility: wgpu.ShaderStageFragment, Sampler: wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering}},
-			{Binding: 3, Visibility: wgpu.ShaderStageFragment, Texture: wgpu.TextureBindingLayout{SampleType: wgpu.TextureSampleTypeFloat, ViewDimension: wgpu.TextureViewDimension2D}},
-			{Binding: 4, Visibility: wgpu.ShaderStageFragment, Sampler: wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering}},
-		},
-	})
-	if err != nil {
-		viewProjLayout.Release()
-		globalLayout.Release()
-		handleLayout.Release()
-		return nil, fmt.Errorf("skinned_mesh_oit: ibl layout: %w", err)
 	}
 
 	pipelineLayout, err := device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
-		Label:            "skinned_mesh_oit pipeline layout",
-		BindGroupLayouts: []*wgpu.BindGroupLayout{viewProjLayout, globalLayout, handleLayout, iblLayout},
+		Label: "skinned_mesh_oit pipeline layout",
+		BindGroupLayouts: []*wgpu.BindGroupLayout{
+			meshState.viewProjLayout,
+			meshState.globalBgLayout,
+			handleLayout,
+			meshState.iblBgLayout,
+		},
 	})
 	if err != nil {
-		viewProjLayout.Release()
-		globalLayout.Release()
 		handleLayout.Release()
-		iblLayout.Release()
 		return nil, fmt.Errorf("skinned_mesh_oit: pipeline layout: %w", err)
 	}
 	defer pipelineLayout.Release()
+
+	vertexBuffers := []wgpu.VertexBufferLayout{{
+		ArrayStride: uint64(unsafe.Sizeof(asset.SkinnedMeshVertex{})),
+		StepMode:    wgpu.VertexStepModeVertex,
+		Attributes: []wgpu.VertexAttribute{
+			{Format: wgpu.VertexFormatFloat32x4, Offset: 0, ShaderLocation: 0},
+			{Format: wgpu.VertexFormatFloat32x4, Offset: 16, ShaderLocation: 1},
+			{Format: wgpu.VertexFormatFloat32x4, Offset: 32, ShaderLocation: 2},
+			{Format: wgpu.VertexFormatFloat32x4, Offset: 48, ShaderLocation: 3},
+			{Format: wgpu.VertexFormatFloat32x4, Offset: 64, ShaderLocation: 4},
+			{Format: wgpu.VertexFormatUint32x4, Offset: 80, ShaderLocation: 5},
+			{Format: wgpu.VertexFormatFloat32x4, Offset: 96, ShaderLocation: 6},
+		},
+	}}
 
 	accumBlend := wgpu.BlendState{
 		Color: wgpu.BlendComponent{SrcFactor: wgpu.BlendFactorOne, DstFactor: wgpu.BlendFactorOne, Operation: wgpu.BlendOperationAdd},
@@ -161,19 +127,7 @@ func newSkinnedMeshOitState(device *wgpu.Device, aspect func() float32) (*skinne
 		Vertex: wgpu.VertexState{
 			Module:     module,
 			EntryPoint: "vertex_main",
-			Buffers: []wgpu.VertexBufferLayout{{
-				ArrayStride: uint64(unsafe.Sizeof(asset.SkinnedMeshVertex{})),
-				StepMode:    wgpu.VertexStepModeVertex,
-				Attributes: []wgpu.VertexAttribute{
-					{Format: wgpu.VertexFormatFloat32x4, Offset: 0, ShaderLocation: 0},
-					{Format: wgpu.VertexFormatFloat32x4, Offset: 16, ShaderLocation: 1},
-					{Format: wgpu.VertexFormatFloat32x4, Offset: 32, ShaderLocation: 2},
-					{Format: wgpu.VertexFormatFloat32x4, Offset: 48, ShaderLocation: 3},
-					{Format: wgpu.VertexFormatFloat32x4, Offset: 64, ShaderLocation: 4},
-					{Format: wgpu.VertexFormatUint32x4, Offset: 80, ShaderLocation: 5},
-					{Format: wgpu.VertexFormatFloat32x4, Offset: 96, ShaderLocation: 6},
-				},
-			}},
+			Buffers:    vertexBuffers,
 		},
 		Primitive: wgpu.PrimitiveState{
 			Topology:  wgpu.PrimitiveTopologyTriangleList,
@@ -199,8 +153,6 @@ func newSkinnedMeshOitState(device *wgpu.Device, aspect func() float32) (*skinne
 		},
 	})
 	if err != nil {
-		viewProjLayout.Release()
-		globalLayout.Release()
 		handleLayout.Release()
 		return nil, fmt.Errorf("skinned_mesh_oit: pipeline: %w", err)
 	}
@@ -211,19 +163,7 @@ func newSkinnedMeshOitState(device *wgpu.Device, aspect func() float32) (*skinne
 		Vertex: wgpu.VertexState{
 			Module:     module,
 			EntryPoint: "vertex_main",
-			Buffers: []wgpu.VertexBufferLayout{{
-				ArrayStride: uint64(unsafe.Sizeof(asset.SkinnedMeshVertex{})),
-				StepMode:    wgpu.VertexStepModeVertex,
-				Attributes: []wgpu.VertexAttribute{
-					{Format: wgpu.VertexFormatFloat32x4, Offset: 0, ShaderLocation: 0},
-					{Format: wgpu.VertexFormatFloat32x4, Offset: 16, ShaderLocation: 1},
-					{Format: wgpu.VertexFormatFloat32x4, Offset: 32, ShaderLocation: 2},
-					{Format: wgpu.VertexFormatFloat32x4, Offset: 48, ShaderLocation: 3},
-					{Format: wgpu.VertexFormatFloat32x4, Offset: 64, ShaderLocation: 4},
-					{Format: wgpu.VertexFormatUint32x4, Offset: 80, ShaderLocation: 5},
-					{Format: wgpu.VertexFormatFloat32x4, Offset: 96, ShaderLocation: 6},
-				},
-			}},
+			Buffers:    vertexBuffers,
 		},
 		Primitive: wgpu.PrimitiveState{
 			Topology:  wgpu.PrimitiveTopologyTriangleList,
@@ -245,111 +185,18 @@ func newSkinnedMeshOitState(device *wgpu.Device, aspect func() float32) (*skinne
 	})
 	if err != nil {
 		pipeline.Release()
-		viewProjLayout.Release()
-		globalLayout.Release()
 		handleLayout.Release()
 		return nil, fmt.Errorf("skinned_mesh_oit: blend-opaque prepass pipeline: %w", err)
-	}
-
-	viewProjBuffer, err := device.CreateBuffer(&wgpu.BufferDescriptor{
-		Label: "skinned_mesh_oit view_proj",
-		Size:  uint64(unsafe.Sizeof(skinnedOitViewProj{})),
-		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
-	})
-	if err != nil {
-		prepassPipeline.Release()
-		pipeline.Release()
-		viewProjLayout.Release()
-		globalLayout.Release()
-		handleLayout.Release()
-		return nil, fmt.Errorf("skinned_mesh_oit: view_proj buffer: %w", err)
-	}
-	viewProjGroup, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-		Label:  "skinned_mesh_oit view_proj bg",
-		Layout: viewProjLayout,
-		Entries: []wgpu.BindGroupEntry{
-			{Binding: 0, Buffer: viewProjBuffer, Offset: 0, Size: uint64(unsafe.Sizeof(skinnedOitViewProj{}))},
-		},
-	})
-	if err != nil {
-		viewProjBuffer.Release()
-		prepassPipeline.Release()
-		pipeline.Release()
-		viewProjLayout.Release()
-		globalLayout.Release()
-		handleLayout.Release()
-		return nil, fmt.Errorf("skinned_mesh_oit: view_proj bg: %w", err)
-	}
-
-	uniformBuffer, err := device.CreateBuffer(&wgpu.BufferDescriptor{
-		Label: "skinned_mesh_oit light uniform",
-		Size:  uint64(unsafe.Sizeof(skinnedUniforms{})),
-		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
-	})
-	if err != nil {
-		viewProjGroup.Release()
-		viewProjBuffer.Release()
-		prepassPipeline.Release()
-		pipeline.Release()
-		viewProjLayout.Release()
-		globalLayout.Release()
-		handleLayout.Release()
-		return nil, fmt.Errorf("skinned_mesh_oit: light buffer: %w", err)
 	}
 
 	return &skinnedMeshOitState{
 		pipeline:        pipeline,
 		prepassPipeline: prepassPipeline,
-		viewProjLayout:  viewProjLayout,
-		globalLayout:    globalLayout,
 		handleLayout:    handleLayout,
-		iblLayout:       iblLayout,
-		viewProjBuffer:  viewProjBuffer,
-		viewProjGroup:   viewProjGroup,
-		uniformBuffer:   uniformBuffer,
-		aspectFn:        aspect,
 	}, nil
 }
 
 func skinnedMeshOitPrepare(state *skinnedMeshOitState, context *render.PassContext) error {
-
-	camera, hasCamera := ecs.Resource[render.Camera](context.World)
-	viewProj := mgl32.Ident4()
-	zFar := float32(1000)
-	cameraPos := mgl32.Vec4{0, 0, 0, 1}
-	if hasCamera && camera != nil {
-		viewProj = render.CameraViewProjection(camera, state.aspectFn())
-		zFar = camera.Far
-		cameraPos = mgl32.Vec4{camera.Eye[0], camera.Eye[1], camera.Eye[2], 1}
-	}
-	vp := skinnedOitViewProj{ViewProj: viewProj, CameraPosition: cameraPos, ZScale: zFar * 0.2}
-	writeBuffer(context.Device, context.Queue, context.Encoder, state.viewProjBuffer, 0, bytesOf(&vp))
-
-	light := defaultSkinnedUniforms()
-	applyDirectionalToSkinned(context.World, &light)
-	writeBuffer(context.Device, context.Queue, context.Encoder, state.uniformBuffer, 0, bytesOf(&light))
-
-	if state.globalGroup == nil {
-		arraysResource, ok := ecs.Resource[asset.MaterialTextureArraysResource](context.World)
-		if !ok || arraysResource == nil || arraysResource.Arrays == nil {
-			return fmt.Errorf("skinned_mesh_oit: MaterialTextureArraysResource missing")
-		}
-		arrays := arraysResource.Arrays
-		bg, err := context.Device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-			Label:  "skinned_mesh_oit global bg",
-			Layout: state.globalLayout,
-			Entries: []wgpu.BindGroupEntry{
-				{Binding: 0, Buffer: state.uniformBuffer, Offset: 0, Size: uint64(unsafe.Sizeof(skinnedUniforms{}))},
-				{Binding: 1, TextureView: arrays.SRGBView},
-				{Binding: 2, Sampler: arrays.Sampler},
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("skinned_mesh_oit: global bg: %w", err)
-		}
-		state.globalGroup = bg
-	}
-
 	skinningRes, ok := ecs.Resource[SkinningComputeResource](context.World)
 	if !ok || skinningRes == nil || skinningRes.Compute == nil {
 		return nil
@@ -371,33 +218,11 @@ func skinnedMeshOitExecute(state *skinnedMeshOitState, context *render.PassConte
 	if len(groups) == 0 {
 		return nil
 	}
-	assets := ecs.MustResource[asset.SkinnedMeshAssetsResource](context.World).Assets
-
 	meshState, ok := findMeshPassState(context.World)
-	if !ok || meshState.ibl == nil || meshState.transmissionView == nil {
+	if !ok || meshState.globalBindGroup == nil || meshState.iblBindGroup == nil || meshState.viewProjBindGroup == nil {
 		return nil
 	}
-	if state.iblGroup == nil || state.lastTransView != meshState.transmissionView {
-		if state.iblGroup != nil {
-			state.iblGroup.Release()
-		}
-		bg, err := context.Device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-			Label:  "skinned_mesh_oit ibl bg",
-			Layout: state.iblLayout,
-			Entries: []wgpu.BindGroupEntry{
-				{Binding: 0, TextureView: meshState.ibl.PrefilteredView},
-				{Binding: 1, TextureView: meshState.ibl.BrdfLutView},
-				{Binding: 2, Sampler: meshState.ibl.Sampler},
-				{Binding: 3, TextureView: meshState.transmissionView},
-				{Binding: 4, Sampler: meshState.transmissionSampler},
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("skinned_mesh_oit: ibl bg: %w", err)
-		}
-		state.iblGroup = bg
-		state.lastTransView = meshState.transmissionView
-	}
+	assets := ecs.MustResource[asset.SkinnedMeshAssetsResource](context.World).Assets
 
 	accum, err := context.ColorAttachment("oit_accum")
 	if err != nil {
@@ -437,10 +262,10 @@ func skinnedMeshOitExecute(state *skinnedMeshOitState, context *render.PassConte
 		DepthStencilAttachment: &prepassDepth,
 	})
 	prepass.SetPipeline(state.prepassPipeline)
-	prepass.SetBindGroup(0, state.viewProjGroup, nil)
-	prepass.SetBindGroup(1, state.globalGroup, nil)
+	prepass.SetBindGroup(0, meshState.viewProjBindGroup, nil)
+	prepass.SetBindGroup(1, meshState.globalBindGroup, nil)
 	prepass.SetBindGroup(2, state.handleBindGroup, nil)
-	prepass.SetBindGroup(3, state.iblGroup, nil)
+	prepass.SetBindGroup(3, meshState.iblBindGroup, nil)
 	for _, group := range groups {
 		entry, ok := assets.Lookup(group.Mesh)
 		if !ok || entry == nil {
@@ -458,11 +283,10 @@ func skinnedMeshOitExecute(state *skinnedMeshOitState, context *render.PassConte
 		DepthStencilAttachment: &depth,
 	})
 	passEnc.SetPipeline(state.pipeline)
-	passEnc.SetBindGroup(0, state.viewProjGroup, nil)
-	passEnc.SetBindGroup(1, state.globalGroup, nil)
+	passEnc.SetBindGroup(0, meshState.viewProjBindGroup, nil)
+	passEnc.SetBindGroup(1, meshState.globalBindGroup, nil)
 	passEnc.SetBindGroup(2, state.handleBindGroup, nil)
-	passEnc.SetBindGroup(3, state.iblGroup, nil)
-
+	passEnc.SetBindGroup(3, meshState.iblBindGroup, nil)
 	for _, group := range groups {
 		entry, ok := assets.Lookup(group.Mesh)
 		if !ok || entry == nil {
@@ -480,21 +304,6 @@ func skinnedMeshOitRelease(state *skinnedMeshOitState) {
 	if state.handleBindGroup != nil {
 		state.handleBindGroup.Release()
 	}
-	if state.globalGroup != nil {
-		state.globalGroup.Release()
-	}
-	if state.iblGroup != nil {
-		state.iblGroup.Release()
-	}
-	if state.viewProjGroup != nil {
-		state.viewProjGroup.Release()
-	}
-	if state.uniformBuffer != nil {
-		state.uniformBuffer.Release()
-	}
-	if state.viewProjBuffer != nil {
-		state.viewProjBuffer.Release()
-	}
 	if state.prepassPipeline != nil {
 		state.prepassPipeline.Release()
 	}
@@ -503,14 +312,5 @@ func skinnedMeshOitRelease(state *skinnedMeshOitState) {
 	}
 	if state.handleLayout != nil {
 		state.handleLayout.Release()
-	}
-	if state.iblLayout != nil {
-		state.iblLayout.Release()
-	}
-	if state.globalLayout != nil {
-		state.globalLayout.Release()
-	}
-	if state.viewProjLayout != nil {
-		state.viewProjLayout.Release()
 	}
 }
