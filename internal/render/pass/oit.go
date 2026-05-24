@@ -12,9 +12,6 @@ import (
 	"github.com/matthewjberger/indigo/render/asset"
 )
 
-//go:embed mesh_oit.wgsl
-var meshOitShader string
-
 //go:embed oit_composite.wgsl
 var oitCompositeShader string
 

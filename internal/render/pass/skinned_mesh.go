@@ -1,7 +1,6 @@
 package pass
 
 import (
-	_ "embed"
 	"fmt"
 	"unsafe"
 
@@ -13,9 +12,6 @@ import (
 	"github.com/matthewjberger/indigo/render/asset"
 	"github.com/matthewjberger/indigo/transform"
 )
-
-//go:embed skinned_mesh.wgsl
-var skinnedMeshShader string
 
 // skinnedUniforms is retained for the instanced mesh pass, which still uses the
 // lightweight directional-light model.

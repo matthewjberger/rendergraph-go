@@ -1,7 +1,6 @@
 package pass
 
 import (
-	_ "embed"
 	"fmt"
 	"unsafe"
 
@@ -11,9 +10,6 @@ import (
 	"github.com/matthewjberger/indigo/render"
 	"github.com/matthewjberger/indigo/render/asset"
 )
-
-//go:embed skinned_mesh_oit.wgsl
-var skinnedMeshOitShader string
 
 // skinnedMeshOitState renders blend and transmissive skinned meshes through the
 // same full PBR + screen-space transmission path as the static OIT pass. It

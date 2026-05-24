@@ -1,7 +1,6 @@
 package pass
 
 import (
-	_ "embed"
 	"sync/atomic"
 
 	"github.com/cogentcore/webgpu/wgpu"
@@ -10,9 +9,6 @@ import (
 	"github.com/matthewjberger/indigo/render"
 	"github.com/matthewjberger/indigo/render/asset"
 )
-
-//go:embed mesh.wgsl
-var meshShader string
 
 var sharedMeshPassState atomic.Value
 
