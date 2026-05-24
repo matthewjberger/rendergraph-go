@@ -110,8 +110,9 @@ type SceneNodeSkinnedPrimitive struct {
 }
 
 type SceneNodePrimitive struct {
-	Mesh     MeshHandle
-	Material Material
+	Mesh             MeshHandle
+	Material         Material
+	MorphTargetCount uint32
 }
 
 type LoadedMesh struct {
@@ -271,7 +272,8 @@ func LoadGltfReaderOpts(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAsse
 				if p.Skinned {
 					skinnedPrims = append(skinnedPrims, SceneNodeSkinnedPrimitive{Mesh: p.SkinnedHandle, Material: p.Material})
 				} else {
-					staticPrims = append(staticPrims, SceneNodePrimitive{Mesh: p.Handle, Material: p.Material})
+					_, morphCount := assets.MorphInfo(p.Handle)
+					staticPrims = append(staticPrims, SceneNodePrimitive{Mesh: p.Handle, Material: p.Material, MorphTargetCount: morphCount})
 				}
 			}
 			switch {
@@ -391,6 +393,10 @@ func SpawnLoadedScene(world *ecs.World, scene *LoadedScene, device *wgpu.Device)
 			ecs.Set(world, child, transform.Parent{Entity: entity})
 			ecs.Set(world, child, RenderMesh{Mesh: prim.Mesh})
 			ecs.Set(world, child, prim.Material)
+			if prim.MorphTargetCount > 0 {
+				world.AddComponents(child, morphMask)
+				ecs.Set(world, child, MorphWeights{Weights: make([]float32, prim.MorphTargetCount)})
+			}
 		}
 		for _, prim := range node.ChildSkinnedPrims {
 			child := world.Spawn(transformMask | parentMask | skinnedMeshMask | materialMask)

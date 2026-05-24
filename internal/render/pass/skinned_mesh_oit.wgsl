@@ -15,7 +15,7 @@ struct VertexOutput {
     @location(1) world_pos: vec3<f32>,
     @location(2) world_normal: vec3<f32>,
     @location(3) world_tangent: vec4<f32>,
-    @location(4) uv: vec2<f32>,
+    @location(4) uv: vec4<f32>,
     @location(5) @interpolate(flat) entity_id: u32,
     @location(6) @interpolate(flat) material_index: u32,
     @location(7) view_normal: vec3<f32>,
@@ -887,7 +887,7 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32)
     out.world_pos = skinned_position;
     out.world_normal = skinned_normal;
     out.world_tangent = vec4<f32>(safe_normalize(skinned_tangent), input.tangent.w);
-    out.uv = input.uv.xy;
+    out.uv = input.uv;
     out.color = input.color;
     out.entity_id = inst.entity_id;
     out.material_index = inst.material_index;
@@ -897,8 +897,9 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32)
     return out;
 }
 
-fn texture_uv(uv: vec2<f32>, transform: TextureTransform) -> vec2<f32> {
-    let h = vec3<f32>(uv, 1.0);
+fn texture_uv(uv: vec4<f32>, transform: TextureTransform) -> vec2<f32> {
+    let coords = select(uv.xy, uv.zw, u32(transform.row0.w) == 1u);
+    let h = vec3<f32>(coords, 1.0);
     return vec2<f32>(dot(transform.row0.xyz, h), dot(transform.row1.xyz, h));
 }
 
@@ -1203,9 +1204,13 @@ fn fragment_main(in: VertexOutput) -> OitOutput {
         if (mat.transmission_layer != NO_LAYER) {
             trans = trans * sample_linear_layer(mat.transmission_layer, texture_uv(in.uv, mat.transmission_transform)).r;
         }
+        var thickness = mat.thickness;
+        if (mat.thickness_layer != NO_LAYER) {
+            thickness = thickness * sample_linear_layer(mat.thickness_layer, texture_uv(in.uv, mat.thickness_transform)).g;
+        }
         let transmission = get_ibl_volume_refraction(
             n, v, in.world_pos, roughness, albedo, f0, mat.ior, mat.dispersion,
-            mat.thickness, mat.attenuation_color, mat.attenuation_distance,
+            thickness, mat.attenuation_color, mat.attenuation_distance,
             vec3<f32>(in.world_scale_factor),
         );
         let transmission_attenuated = transmission * (vec3<f32>(1.0) - fss_ess);

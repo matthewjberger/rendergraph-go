@@ -10,7 +10,7 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) @interpolate(flat) material_index: u32,
-    @location(1) uv: vec2<f32>,
+    @location(1) uv: vec4<f32>,
     @location(2) color: vec4<f32>,
 };
 
@@ -143,8 +143,9 @@ fn apply_wrap(uv: vec2<f32>, packed: u32) -> vec2<f32> {
     return vec2<f32>(apply_wrap_axis(uv.x, mode_u), apply_wrap_axis(uv.y, mode_v));
 }
 
-fn texture_uv(uv: vec2<f32>, transform: TextureTransform) -> vec2<f32> {
-    let h = vec3<f32>(uv, 1.0);
+fn texture_uv(uv: vec4<f32>, transform: TextureTransform) -> vec2<f32> {
+    let coords = select(uv.xy, uv.zw, u32(transform.row0.w) == 1u);
+    let h = vec3<f32>(coords, 1.0);
     return vec2<f32>(dot(transform.row0.xyz, h), dot(transform.row1.xyz, h));
 }
 
@@ -166,7 +167,7 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32,
     let world = model * vec4<f32>(local_position, 1.0);
     out.clip_position = view_proj * world;
     out.material_index = material_indices[slot];
-    out.uv = input.uv.xy;
+    out.uv = input.uv;
     out.color = input.color;
     return out;
 }
