@@ -23,11 +23,9 @@ jobs:
           GOOS: js
           GOARCH: wasm
         run: |
-          mkdir -p site/editor site/breakout
+          mkdir -p site/editor
           go build -o site/editor/main.wasm ./cmd/editor
-          go build -o site/breakout/main.wasm ./cmd/breakout
           cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/editor/wasm_exec.js
-          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/breakout/wasm_exec.js
 
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@v4
