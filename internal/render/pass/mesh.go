@@ -117,7 +117,7 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 	}
 	state.meshCulling = culling
 
-	prepass, err := newDepthPrepassPipeline(device, state.viewProjLayout, state.handleBgLayout, registry)
+	prepass, err := newDepthPrepassPipeline(device, state.viewProjLayout, state.handleBgLayout, registry, arrays)
 	if err != nil {
 		return nil, err
 	}

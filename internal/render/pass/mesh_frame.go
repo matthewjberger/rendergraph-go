@@ -288,6 +288,7 @@ func meshExecute(state *meshPassState, context *render.PassContext) error {
 		prepass.SetPipeline(state.depthPrepass.pipeline)
 		prepass.SetBindGroup(0, state.viewProjBindGroup, nil)
 		prepass.SetBindGroup(2, state.depthPrepass.matsBg, nil)
+		prepass.SetBindGroup(3, state.depthPrepass.texBg, nil)
 		for _, handle := range state.sortedHandles {
 			bucket := state.perHandle[handle]
 			entry, ok := assets.Lookup(handle)

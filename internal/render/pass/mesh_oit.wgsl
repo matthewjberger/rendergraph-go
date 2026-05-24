@@ -14,6 +14,11 @@ struct DirectionalLight {
     ambient:   vec4<f32>,
 };
 
+struct TextureTransform {
+    row0: vec4<f32>,
+    row1: vec4<f32>,
+};
+
 struct Material {
     base_color:                vec4<f32>,
     emissive_factor:           vec3<f32>,
@@ -34,6 +39,59 @@ struct Material {
     _pad0:                     f32,
     _pad1:                     f32,
     _pad2:                     f32,
+
+    normal_map_flags:     u32,
+    specular_factor:      f32,
+    specular_layer:       u32,
+    specular_color_layer: u32,
+
+    specular_color_factor: vec3<f32>,
+    transmission_factor:   f32,
+
+    transmission_layer:   u32,
+    thickness:            f32,
+    thickness_layer:      u32,
+    attenuation_distance: f32,
+
+    attenuation_color: vec3<f32>,
+    dispersion:        f32,
+
+    anisotropy_strength:     f32,
+    anisotropy_rotation_cos: f32,
+    anisotropy_rotation_sin: f32,
+    anisotropy_layer:        u32,
+
+    clearcoat_factor:          f32,
+    clearcoat_roughness_factor: f32,
+    clearcoat_normal_scale:    f32,
+    clearcoat_layer:           u32,
+
+    clearcoat_roughness_layer: u32,
+    clearcoat_normal_layer:    u32,
+    sheen_color_layer:         u32,
+    sheen_roughness_layer:     u32,
+
+    sheen_color_factor:     vec3<f32>,
+    sheen_roughness_factor: f32,
+
+    iridescence_factor:        f32,
+    iridescence_ior:           f32,
+    iridescence_thickness_min: f32,
+    iridescence_thickness_max: f32,
+
+    iridescence_layer:           u32,
+    iridescence_thickness_layer: u32,
+    diffuse_transmission_factor: f32,
+    diffuse_transmission_color_layer: u32,
+
+    diffuse_transmission_color_factor: vec3<f32>,
+    _pad_dt:                           f32,
+
+    base_transform:               TextureTransform,
+    normal_transform:             TextureTransform,
+    metallic_roughness_transform: TextureTransform,
+    occlusion_transform:          TextureTransform,
+    emissive_transform:           TextureTransform,
 };
 
 @group(0) @binding(0) var<uniform>       view_proj_uniform: ViewProj;

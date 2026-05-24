@@ -50,6 +50,11 @@ struct ClusterUniforms {
     camera_position: vec4<f32>,
 };
 
+struct TextureTransform {
+    row0: vec4<f32>,
+    row1: vec4<f32>,
+};
+
 struct Material {
     base_color:      vec4<f32>,
     emissive_factor: vec3<f32>,
@@ -74,6 +79,59 @@ struct Material {
     _pad1a:            f32,
     _pad1b:            f32,
     _pad1c:            f32,
+
+    normal_map_flags:     u32,
+    specular_factor:      f32,
+    specular_layer:       u32,
+    specular_color_layer: u32,
+
+    specular_color_factor: vec3<f32>,
+    transmission_factor:   f32,
+
+    transmission_layer:   u32,
+    thickness:            f32,
+    thickness_layer:      u32,
+    attenuation_distance: f32,
+
+    attenuation_color: vec3<f32>,
+    dispersion:        f32,
+
+    anisotropy_strength:     f32,
+    anisotropy_rotation_cos: f32,
+    anisotropy_rotation_sin: f32,
+    anisotropy_layer:        u32,
+
+    clearcoat_factor:          f32,
+    clearcoat_roughness_factor: f32,
+    clearcoat_normal_scale:    f32,
+    clearcoat_layer:           u32,
+
+    clearcoat_roughness_layer: u32,
+    clearcoat_normal_layer:    u32,
+    sheen_color_layer:         u32,
+    sheen_roughness_layer:     u32,
+
+    sheen_color_factor:     vec3<f32>,
+    sheen_roughness_factor: f32,
+
+    iridescence_factor:        f32,
+    iridescence_ior:           f32,
+    iridescence_thickness_min: f32,
+    iridescence_thickness_max: f32,
+
+    iridescence_layer:           u32,
+    iridescence_thickness_layer: u32,
+    diffuse_transmission_factor: f32,
+    diffuse_transmission_color_layer: u32,
+
+    diffuse_transmission_color_factor: vec3<f32>,
+    _pad_dt:                           f32,
+
+    base_transform:               TextureTransform,
+    normal_transform:             TextureTransform,
+    metallic_roughness_transform: TextureTransform,
+    occlusion_transform:          TextureTransform,
+    emissive_transform:           TextureTransform,
 };
 
 @group(0) @binding(0) var<uniform> view_proj: mat4x4<f32>;
@@ -545,19 +603,97 @@ fn sample_point_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>, shadow_ind
     return visibility / 16.0;
 }
 
-fn shade_one_light(light: Light, point_to_light: vec3<f32>, v: vec3<f32>, n: vec3<f32>, albedo: vec3<f32>, f0: vec3<f32>, metallic: f32, roughness: f32) -> vec3<f32> {
+fn d_charlie(roughness: f32, n_dot_h: f32) -> f32 {
+    let alpha = max(roughness * roughness, 0.0001);
+    let inv_alpha = 1.0 / alpha;
+    let cos2h = n_dot_h * n_dot_h;
+    let sin2h = max(1.0 - cos2h, 0.0078125);
+    return (2.0 + inv_alpha) * pow(sin2h, inv_alpha * 0.5) / (2.0 * PI);
+}
+
+fn v_neubelt(n_dot_v: f32, n_dot_l: f32) -> f32 {
+    return clamp(1.0 / (4.0 * (n_dot_l + n_dot_v - n_dot_l * n_dot_v)), 0.0, 1.0);
+}
+
+fn fresnel_clearcoat(cos_theta: f32) -> f32 {
+    return 0.04 + 0.96 * pow(max(1.0 - cos_theta, 0.0), 5.0);
+}
+
+fn d_ggx_anisotropic(n_dot_h: f32, t_dot_h: f32, b_dot_h: f32, at: f32, ab: f32) -> f32 {
+    let a2 = at * ab;
+    let f = vec3<f32>(ab * t_dot_h, at * b_dot_h, a2 * n_dot_h);
+    let w2 = a2 / max(dot(f, f), 1.0e-6);
+    return a2 * w2 * w2 / PI;
+}
+
+fn v_ggx_anisotropic(n_dot_l: f32, n_dot_v: f32, b_dot_v: f32, t_dot_v: f32, b_dot_l: f32, t_dot_l: f32, at: f32, ab: f32) -> f32 {
+    let ggx_v = n_dot_l * length(vec3<f32>(at * t_dot_v, ab * b_dot_v, n_dot_v));
+    let ggx_l = n_dot_v * length(vec3<f32>(at * t_dot_l, ab * b_dot_l, n_dot_l));
+    return clamp(0.5 / max(ggx_v + ggx_l, 1.0e-4), 0.0, 1.0);
+}
+
+struct ShadeParams {
+    aniso_strength: f32,
+    aniso_t: vec3<f32>,
+    aniso_b: vec3<f32>,
+    sheen_color: vec3<f32>,
+    sheen_roughness: f32,
+    sheen_scale: f32,
+    cc_factor: f32,
+    cc_roughness: f32,
+    cc_normal: vec3<f32>,
+};
+
+fn shade_one_light(light: Light, point_to_light: vec3<f32>, v: vec3<f32>, n: vec3<f32>, albedo: vec3<f32>, f0: vec3<f32>, metallic: f32, roughness: f32, p: ShadeParams) -> vec3<f32> {
     let l = normalize(point_to_light);
     let h = normalize(v + l);
     let n_dot_l = max(dot(n, l), 0.0);
     let n_dot_v = max(dot(n, v), 0.0);
+    let n_dot_h = max(dot(n, h), 0.0);
     let radiance = light_radiance(light, point_to_light);
-    let ndf = distribution_ggx(n, h, roughness);
-    let g = geometry_smith(n, v, l, roughness);
     let f = fresnel_schlick(max(dot(h, v), 0.0), f0);
-    let specular = (ndf * g * f) / (4.0 * n_dot_v * n_dot_l + 0.0001);
+    var specular: vec3<f32>;
+    if (p.aniso_strength > 0.0) {
+        let alpha = roughness * roughness;
+        let at = mix(alpha, 1.0, p.aniso_strength * p.aniso_strength);
+        let ab = alpha;
+        let d = d_ggx_anisotropic(n_dot_h, dot(p.aniso_t, h), dot(p.aniso_b, h), at, ab);
+        let vv = v_ggx_anisotropic(n_dot_l, n_dot_v, dot(p.aniso_b, v), dot(p.aniso_t, v), dot(p.aniso_b, l), dot(p.aniso_t, l), at, ab);
+        specular = f * d * vv;
+    } else {
+        let ndf = distribution_ggx(n, h, roughness);
+        let g = geometry_smith(n, v, l, roughness);
+        specular = (ndf * g * f) / (4.0 * n_dot_v * n_dot_l + 0.0001);
+    }
     let kd = (vec3<f32>(1.0) - f) * (1.0 - metallic);
     let diffuse = kd * albedo / PI;
-    return (diffuse + specular) * radiance * n_dot_l;
+    var contribution = (diffuse + specular) * radiance * n_dot_l;
+
+    let sheen_max = max(p.sheen_color.r, max(p.sheen_color.g, p.sheen_color.b));
+    if (sheen_max > 0.0 && n_dot_l > 0.0) {
+        let sheen_brdf = p.sheen_color * d_charlie(p.sheen_roughness, n_dot_h) * v_neubelt(n_dot_v, n_dot_l);
+        contribution = contribution * p.sheen_scale + sheen_brdf * radiance * n_dot_l;
+    }
+
+    if (p.cc_factor > 0.0) {
+        let cc_n_dot_l = max(dot(p.cc_normal, l), 0.0);
+        if (cc_n_dot_l > 0.0) {
+            let cc_n_dot_v = max(dot(p.cc_normal, v), 0.0);
+            let cc_n_dot_h = max(dot(p.cc_normal, h), 0.0);
+            let cc_v_dot_h = max(dot(v, h), 0.0);
+            let cc_alpha = p.cc_roughness * p.cc_roughness;
+            let cc_a2 = cc_alpha * cc_alpha;
+            let denom = cc_n_dot_h * cc_n_dot_h * (cc_a2 - 1.0) + 1.0;
+            let cc_d = cc_a2 / (PI * denom * denom);
+            let cc_k = (p.cc_roughness + 1.0) * (p.cc_roughness + 1.0) / 8.0;
+            let cc_gv = cc_n_dot_v / (cc_n_dot_v * (1.0 - cc_k) + cc_k);
+            let cc_gl = cc_n_dot_l / (cc_n_dot_l * (1.0 - cc_k) + cc_k);
+            let cc_fr = fresnel_clearcoat(cc_v_dot_h);
+            let cc_lobe = cc_fr * cc_d * (cc_gv * cc_gl) / max(4.0 * cc_n_dot_v * cc_n_dot_l, 0.001);
+            contribution = contribution * (1.0 - p.cc_factor * cc_fr) + p.cc_factor * cc_lobe * radiance * cc_n_dot_l;
+        }
+    }
+    return contribution;
 }
 
 @vertex
@@ -578,6 +714,77 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32)
     let view_mat3 = mat3x3<f32>(view_matrix[0].xyz, view_matrix[1].xyz, view_matrix[2].xyz);
     out.view_normal = view_mat3 * out.world_normal;
     return out;
+}
+
+fn texture_uv(uv: vec2<f32>, transform: TextureTransform) -> vec2<f32> {
+    let h = vec3<f32>(uv, 1.0);
+    return vec2<f32>(dot(transform.row0.xyz, h), dot(transform.row1.xyz, h));
+}
+
+fn fresnel0_to_ior(f0: vec3<f32>) -> vec3<f32> {
+    let s = sqrt(clamp(f0, vec3<f32>(0.0), vec3<f32>(0.9999)));
+    return (vec3<f32>(1.0) + s) / (vec3<f32>(1.0) - s);
+}
+
+fn ior_to_fresnel0_v(transmitted: vec3<f32>, incident: f32) -> vec3<f32> {
+    let r = (transmitted - vec3<f32>(incident)) / (transmitted + vec3<f32>(incident));
+    return r * r;
+}
+
+fn ior_to_fresnel0_f(transmitted: f32, incident: f32) -> f32 {
+    let r = (transmitted - incident) / (transmitted + incident);
+    return r * r;
+}
+
+fn eval_sensitivity(opd: f32, shift: vec3<f32>) -> vec3<f32> {
+    let phase = 2.0 * PI * opd * 1.0e-9;
+    let val = vec3<f32>(5.4856e-13, 4.4201e-13, 5.2481e-13);
+    let pos = vec3<f32>(1.6810e+06, 1.7953e+06, 2.2084e+06);
+    let var_ = vec3<f32>(4.3278e+09, 9.3046e+09, 6.6121e+09);
+    var xyz = val * sqrt(2.0 * PI * var_) * cos(pos * phase + shift) * exp(-phase * phase * var_);
+    xyz.x = xyz.x + 9.7470e-14 * sqrt(2.0 * PI * 4.5282e+09) * cos(2.2399e+06 * phase + shift.x) * exp(-4.5282e+09 * phase * phase);
+    xyz = xyz / 1.0685e-7;
+    let xyz_to_rec709 = mat3x3<f32>(
+        vec3<f32>(3.2404542, -0.9692660, 0.0556434),
+        vec3<f32>(-1.5371385, 1.8760108, -0.2040259),
+        vec3<f32>(-0.4985314, 0.0415560, 1.0572252),
+    );
+    return xyz_to_rec709 * xyz;
+}
+
+fn eval_iridescence(outside_ior: f32, eta2: f32, cos_theta1: f32, thickness: f32, base_f0: vec3<f32>) -> vec3<f32> {
+    let irid_ior = mix(outside_ior, eta2, smoothstep(0.0, 0.03, thickness));
+    let sin_theta2_sq = (outside_ior / irid_ior) * (outside_ior / irid_ior) * (1.0 - cos_theta1 * cos_theta1);
+    let cos_theta2_sq = 1.0 - sin_theta2_sq;
+    if (cos_theta2_sq < 0.0) {
+        return vec3<f32>(1.0);
+    }
+    let cos_theta2 = sqrt(cos_theta2_sq);
+    let r0_film = ior_to_fresnel0_f(irid_ior, outside_ior);
+    let r12 = r0_film + (1.0 - r0_film) * pow(max(1.0 - cos_theta1, 0.0), 5.0);
+    let t121 = 1.0 - r12;
+    var phi12 = 0.0;
+    if (irid_ior < outside_ior) { phi12 = PI; }
+    let phi21 = PI - phi12;
+    let base_ior = fresnel0_to_ior(base_f0);
+    let r1 = ior_to_fresnel0_v(base_ior, irid_ior);
+    let r23 = r1 + (vec3<f32>(1.0) - r1) * pow(max(1.0 - cos_theta2, 0.0), 5.0);
+    var phi23 = vec3<f32>(0.0);
+    if (base_ior.x < irid_ior) { phi23.x = PI; }
+    if (base_ior.y < irid_ior) { phi23.y = PI; }
+    if (base_ior.z < irid_ior) { phi23.z = PI; }
+    let opd = 2.0 * irid_ior * thickness * cos_theta2;
+    let phi = vec3<f32>(phi21) + phi23;
+    let r123 = clamp(vec3<f32>(r12) * r23, vec3<f32>(1.0e-5), vec3<f32>(0.9999));
+    let r123_sqrt = sqrt(r123);
+    let rs = (t121 * t121) * r23 / (vec3<f32>(1.0) - r123);
+    var i = vec3<f32>(r12) + rs;
+    var cm = rs - vec3<f32>(t121);
+    cm = cm * r123_sqrt;
+    i = i + cm * 2.0 * eval_sensitivity(opd, phi);
+    cm = cm * r123_sqrt;
+    i = i + cm * 2.0 * eval_sensitivity(2.0 * opd, 2.0 * phi);
+    return max(i, vec3<f32>(0.0));
 }
 
 @fragment
@@ -604,13 +811,13 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
     var normal_sample = vec3<f32>(0.5, 0.5, 1.0);
     let has_normal_texture = mat.normal_layer != NO_LAYER;
     if (has_normal_texture) {
-        normal_sample = sample_linear_layer(mat.normal_layer, in.uv).xyz;
+        normal_sample = sample_linear_layer(mat.normal_layer, texture_uv(in.uv, mat.normal_transform)).xyz;
     }
     let normal = get_normal(geom_normal, geom_tangent, normal_sample, has_normal_texture, mat.normal_scale, 0u);
 
     var albedo_sample = vec4<f32>(1.0, 1.0, 1.0, 1.0);
     if (mat.base_layer != NO_LAYER) {
-        albedo_sample = sample_srgb_layer(mat.base_layer, in.uv);
+        albedo_sample = sample_srgb_layer(mat.base_layer, texture_uv(in.uv, mat.base_transform));
     }
     let base_color = mat.base_color * albedo_sample * in.color;
     let albedo = base_color.rgb;
@@ -625,7 +832,7 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
     var metallic = mat.metallic_factor;
     var roughness = mat.roughness_factor;
     if (mat.metallic_roughness_layer != NO_LAYER) {
-        let mr = sample_linear_layer(mat.metallic_roughness_layer, in.uv);
+        let mr = sample_linear_layer(mat.metallic_roughness_layer, texture_uv(in.uv, mat.metallic_roughness_transform));
         roughness = roughness * mr.g;
         metallic = metallic * mr.b;
     }
@@ -634,12 +841,12 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
 
     var occlusion = 1.0;
     if (mat.occlusion_layer != NO_LAYER) {
-        occlusion = sample_linear_layer(mat.occlusion_layer, in.uv).r;
+        occlusion = sample_linear_layer(mat.occlusion_layer, texture_uv(in.uv, mat.occlusion_transform)).r;
     }
 
     var emissive = mat.emissive_factor * mat.emissive_strength;
     if (mat.emissive_layer != NO_LAYER) {
-        emissive = emissive * sample_srgb_layer(mat.emissive_layer, in.uv).rgb;
+        emissive = emissive * sample_srgb_layer(mat.emissive_layer, texture_uv(in.uv, mat.emissive_transform)).rgb;
     }
 
     if (mat.unlit != 0u) {
@@ -653,8 +860,75 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
     let v = view_dir;
     let n = normal;
 
+    var specular_color = mat.specular_color_factor;
+    if (mat.specular_color_layer != NO_LAYER) {
+        specular_color = specular_color * sample_srgb_layer(mat.specular_color_layer, in.uv).rgb;
+    }
+    var specular_strength = mat.specular_factor;
+    if (mat.specular_layer != NO_LAYER) {
+        specular_strength = specular_strength * sample_linear_layer(mat.specular_layer, in.uv).a;
+    }
     let dielectric_f0 = pow((mat.ior - 1.0) / (mat.ior + 1.0), 2.0);
-    let f0 = mix(vec3<f32>(dielectric_f0), albedo, metallic);
+    let dielectric_specular_f0 = min(vec3<f32>(dielectric_f0) * specular_color, vec3<f32>(1.0));
+    var f0 = mix(dielectric_specular_f0, albedo, metallic);
+
+    if (mat.iridescence_factor > 0.0) {
+        var irid_factor = mat.iridescence_factor;
+        if (mat.iridescence_layer != NO_LAYER) {
+            irid_factor = irid_factor * sample_linear_layer(mat.iridescence_layer, in.uv).r;
+        }
+        var irid_thickness = mat.iridescence_thickness_max;
+        if (mat.iridescence_thickness_layer != NO_LAYER) {
+            let t = sample_linear_layer(mat.iridescence_thickness_layer, in.uv).g;
+            irid_thickness = mix(mat.iridescence_thickness_min, mat.iridescence_thickness_max, t);
+        }
+        if (irid_factor > 0.0 && irid_thickness > 0.0) {
+            let irid_f0 = eval_iridescence(1.0, mat.iridescence_ior, max(dot(n, v), 0.0), irid_thickness, f0);
+            f0 = mix(f0, irid_f0, irid_factor);
+        }
+    }
+
+    var shade: ShadeParams;
+    shade.aniso_strength = mat.anisotropy_strength;
+    var aniso_dir = vec2<f32>(mat.anisotropy_rotation_cos, mat.anisotropy_rotation_sin);
+    if (mat.anisotropy_layer != NO_LAYER) {
+        let a = sample_linear_layer(mat.anisotropy_layer, in.uv);
+        let td = a.xy * 2.0 - 1.0;
+        aniso_dir = vec2<f32>(
+            mat.anisotropy_rotation_cos * td.x - mat.anisotropy_rotation_sin * td.y,
+            mat.anisotropy_rotation_sin * td.x + mat.anisotropy_rotation_cos * td.y);
+        shade.aniso_strength = shade.aniso_strength * a.b;
+    }
+    let tangent_w = normalize(geom_tangent.xyz);
+    let bitangent_w = cross(n, tangent_w) * geom_tangent.w;
+    shade.aniso_t = aniso_dir.x * tangent_w + aniso_dir.y * bitangent_w;
+    shade.aniso_b = cross(n, shade.aniso_t);
+
+    var sheen_color = mat.sheen_color_factor;
+    if (mat.sheen_color_layer != NO_LAYER) {
+        sheen_color = sheen_color * sample_srgb_layer(mat.sheen_color_layer, in.uv).rgb;
+    }
+    var sheen_rough = clamp(mat.sheen_roughness_factor, 0.07, 1.0);
+    if (mat.sheen_roughness_layer != NO_LAYER) {
+        sheen_rough = sheen_rough * sample_linear_layer(mat.sheen_roughness_layer, in.uv).a;
+    }
+    shade.sheen_color = sheen_color;
+    shade.sheen_roughness = sheen_rough;
+    let sheen_max = max(sheen_color.r, max(sheen_color.g, sheen_color.b));
+    let sheen_e = textureSampleLevel(brdf_lut, ibl_sampler, vec2<f32>(max(dot(n, v), 0.0), sheen_rough), 0.0).b;
+    shade.sheen_scale = clamp(1.0 - sheen_max * sheen_e, 0.0, 1.0);
+
+    var cc_factor = mat.clearcoat_factor;
+    if (mat.clearcoat_layer != NO_LAYER) {
+        cc_factor = cc_factor * sample_linear_layer(mat.clearcoat_layer, in.uv).r;
+    }
+    var cc_roughness = clamp(mat.clearcoat_roughness_factor, 0.04, 1.0);
+    if (mat.clearcoat_roughness_layer != NO_LAYER) {
+        cc_roughness = cc_roughness * sample_linear_layer(mat.clearcoat_roughness_layer, in.uv).g;
+    }
+    shade.cc_factor = cc_factor;
+    shade.cc_roughness = cc_roughness;
+    shade.cc_normal = n;
 
     var lo = vec3<f32>(0.0);
 
@@ -663,7 +937,7 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
     for (var i = 0u; i < cluster_uniforms.num_directional_lights; i = i + 1u) {
         let light = lights[i];
         let point_to_light = -light.direction.xyz;
-        var contribution = shade_one_light(light, point_to_light, v, n, albedo, f0, metallic, roughness);
+        var contribution = shade_one_light(light, point_to_light, v, n, albedo, f0, metallic, roughness, shade);
         if (i == 0u) {
             contribution = contribution * shadow_factor;
         }
@@ -680,7 +954,7 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
         let light_idx = light_indices[base + i];
         let light = lights[cluster_uniforms.num_directional_lights + light_idx];
         let point_to_light = light.position.xyz - in.world_pos;
-        var contribution = shade_one_light(light, point_to_light, v, n, albedo, f0, metallic, roughness);
+        var contribution = shade_one_light(light, point_to_light, v, n, albedo, f0, metallic, roughness, shade);
         if (light.light_type == LIGHT_TYPE_SPOT && light.shadow_index >= 0) {
             contribution = contribution * sample_spot_shadow(in.world_pos, n, light.shadow_index);
         }
@@ -702,9 +976,56 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
     let fms_ems = ems * fss_ess * f_avg / (vec3<f32>(1.0) - f_avg * ems);
     let c_diff = albedo * (1.0 - metallic);
     let kd_ibl = c_diff * (vec3<f32>(1.0) - fss_ess - fms_ems);
-    let diffuse_ibl = (fms_ems + kd_ibl) * irradiance;
-    let specular_ibl = prefiltered * fss_ess;
+    var diffuse_ibl = (fms_ems + kd_ibl) * irradiance;
+
+    if (mat.diffuse_transmission_factor > 0.0) {
+        var dt_factor = mat.diffuse_transmission_factor;
+        var dt_color = mat.diffuse_transmission_color_factor;
+        if (mat.diffuse_transmission_color_layer != NO_LAYER) {
+            dt_color = dt_color * sample_srgb_layer(mat.diffuse_transmission_color_layer, in.uv).rgb;
+        }
+        let back_irradiance = textureSampleLevel(irradiance_map, ibl_sampler, -n, 0.0).rgb;
+        let c_diff_back = dt_color * albedo * (1.0 - metallic);
+        let dt_diffuse = (fms_ems + c_diff_back * (vec3<f32>(1.0) - fss_ess - fms_ems)) * back_irradiance;
+        diffuse_ibl = mix(diffuse_ibl, dt_diffuse, dt_factor);
+    }
+
+    if (mat.transmission_factor > 0.0) {
+        var trans = mat.transmission_factor;
+        if (mat.transmission_layer != NO_LAYER) {
+            trans = trans * sample_linear_layer(mat.transmission_layer, in.uv).r;
+        }
+        let refr_dir = refract(-v, n, 1.0 / mat.ior);
+        let trans_roughness = roughness * clamp(mat.ior * 2.0 - 2.0, 0.0, 1.0);
+        var transmitted = textureSampleLevel(prefiltered_env, ibl_sampler, refr_dir, trans_roughness * MAX_REFLECTION_LOD).rgb;
+        if (mat.attenuation_distance > 0.0) {
+            let att = -log(max(mat.attenuation_color, vec3<f32>(0.0001))) / mat.attenuation_distance;
+            transmitted = transmitted * exp(-att * max(mat.thickness, 0.001));
+        }
+        let transmitted_attenuated = transmitted * (vec3<f32>(1.0) - fss_ess) * albedo;
+        diffuse_ibl = mix(diffuse_ibl, transmitted_attenuated, trans);
+    }
+
+    let specular_ibl = prefiltered * fss_ess * specular_strength;
     var ambient = diffuse_ibl + specular_ibl;
+
+    if (mat.clearcoat_factor > 0.0) {
+        var cc = mat.clearcoat_factor;
+        if (mat.clearcoat_layer != NO_LAYER) {
+            cc = cc * sample_linear_layer(mat.clearcoat_layer, in.uv).r;
+        }
+        var cc_rough = clamp(mat.clearcoat_roughness_factor, 0.04, 1.0);
+        if (mat.clearcoat_roughness_layer != NO_LAYER) {
+            cc_rough = cc_rough * sample_linear_layer(mat.clearcoat_roughness_layer, in.uv).g;
+        }
+        let cc_r = reflect(-v, n);
+        let cc_prefiltered = textureSampleLevel(prefiltered_env, ibl_sampler, cc_r, cc_rough * MAX_REFLECTION_LOD).rgb;
+        let cc_f = fresnel_clearcoat(n_dot_v);
+        let cc_brdf = textureSampleLevel(brdf_lut, ibl_sampler, vec2<f32>(n_dot_v, cc_rough), 0.0).rg;
+        let cc_spec = cc * (cc_f * cc_brdf.x + cc_brdf.y) * cc_prefiltered;
+        ambient = ambient * (1.0 - cc * cc_f) + cc_spec;
+    }
+
     ambient = mix(ambient, ambient * occlusion, mat.occlusion_strength);
     let color = ambient + lo + emissive;
 

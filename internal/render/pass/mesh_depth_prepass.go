@@ -18,9 +18,11 @@ type depthPrepass struct {
 	pipeline   *wgpu.RenderPipeline
 	matsLayout *wgpu.BindGroupLayout
 	matsBg     *wgpu.BindGroup
+	texLayout  *wgpu.BindGroupLayout
+	texBg      *wgpu.BindGroup
 }
 
-func newDepthPrepassPipeline(device *wgpu.Device, viewProjLayout, handleLayout *wgpu.BindGroupLayout, materialRegistry *asset.MaterialRegistry) (*depthPrepass, error) {
+func newDepthPrepassPipeline(device *wgpu.Device, viewProjLayout, handleLayout *wgpu.BindGroupLayout, materialRegistry *asset.MaterialRegistry, arrays *asset.MaterialTextureArrays) (*depthPrepass, error) {
 	module, err := device.CreateShaderModule(&wgpu.ShaderModuleDescriptor{
 		Label:          "mesh depth prepass shader",
 		WGSLDescriptor: &wgpu.ShaderModuleWGSLDescriptor{Code: meshDepthPrepassShader},
@@ -34,7 +36,7 @@ func newDepthPrepassPipeline(device *wgpu.Device, viewProjLayout, handleLayout *
 		Label: "mesh depth prepass materials layout",
 		Entries: []wgpu.BindGroupLayoutEntry{{
 			Binding:    0,
-			Visibility: wgpu.ShaderStageVertex,
+			Visibility: wgpu.ShaderStageVertex | wgpu.ShaderStageFragment,
 			Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeReadOnlyStorage},
 		}},
 	})
@@ -54,11 +56,49 @@ func newDepthPrepassPipeline(device *wgpu.Device, viewProjLayout, handleLayout *
 		return nil, fmt.Errorf("mesh depth prepass: materials bg: %w", err)
 	}
 
-	layout, err := device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
-		Label:            "mesh depth prepass pipeline layout",
-		BindGroupLayouts: []*wgpu.BindGroupLayout{viewProjLayout, handleLayout, matsLayout},
+	texLayout, err := device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+		Label: "mesh depth prepass texture layout",
+		Entries: []wgpu.BindGroupLayoutEntry{
+			{
+				Binding:    0,
+				Visibility: wgpu.ShaderStageFragment,
+				Texture:    wgpu.TextureBindingLayout{SampleType: wgpu.TextureSampleTypeFloat, ViewDimension: wgpu.TextureViewDimension2DArray},
+			},
+			{
+				Binding:    1,
+				Visibility: wgpu.ShaderStageFragment,
+				Sampler:    wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering},
+			},
+		},
 	})
 	if err != nil {
+		matsBg.Release()
+		matsLayout.Release()
+		return nil, fmt.Errorf("mesh depth prepass: texture layout: %w", err)
+	}
+
+	texBg, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+		Label:  "mesh depth prepass texture bg",
+		Layout: texLayout,
+		Entries: []wgpu.BindGroupEntry{
+			{Binding: 0, TextureView: arrays.SRGBView},
+			{Binding: 1, Sampler: arrays.Sampler},
+		},
+	})
+	if err != nil {
+		texLayout.Release()
+		matsBg.Release()
+		matsLayout.Release()
+		return nil, fmt.Errorf("mesh depth prepass: texture bg: %w", err)
+	}
+
+	layout, err := device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
+		Label:            "mesh depth prepass pipeline layout",
+		BindGroupLayouts: []*wgpu.BindGroupLayout{viewProjLayout, handleLayout, matsLayout, texLayout},
+	})
+	if err != nil {
+		texBg.Release()
+		texLayout.Release()
 		matsBg.Release()
 		matsLayout.Release()
 		return nil, fmt.Errorf("mesh depth prepass: pipeline layout: %w", err)
@@ -103,6 +143,8 @@ func newDepthPrepassPipeline(device *wgpu.Device, viewProjLayout, handleLayout *
 		},
 	})
 	if err != nil {
+		texBg.Release()
+		texLayout.Release()
 		matsBg.Release()
 		matsLayout.Release()
 		return nil, fmt.Errorf("mesh depth prepass: pipeline: %w", err)
@@ -111,12 +153,20 @@ func newDepthPrepassPipeline(device *wgpu.Device, viewProjLayout, handleLayout *
 		pipeline:   pipeline,
 		matsLayout: matsLayout,
 		matsBg:     matsBg,
+		texLayout:  texLayout,
+		texBg:      texBg,
 	}, nil
 }
 
 func (d *depthPrepass) release() {
 	if d == nil {
 		return
+	}
+	if d.texBg != nil {
+		d.texBg.Release()
+	}
+	if d.texLayout != nil {
+		d.texLayout.Release()
 	}
 	if d.matsBg != nil {
 		d.matsBg.Release()

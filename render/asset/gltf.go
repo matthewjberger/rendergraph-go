@@ -769,6 +769,11 @@ func classifyTextures(doc *gltf.Document) []TextureColorSpace {
 			spaces[info.Index] = space
 		}
 	}
+	markIndex := func(index uint32) {
+		if int(index) < len(spaces) {
+			spaces[index] = TextureSRGB
+		}
+	}
 	for _, mat := range doc.Materials {
 		if mat.PBRMetallicRoughness != nil {
 			mark(mat.PBRMetallicRoughness.BaseColorTexture, TextureSRGB)
@@ -776,8 +781,47 @@ func classifyTextures(doc *gltf.Document) []TextureColorSpace {
 		if mat.EmissiveTexture != nil {
 			mark(mat.EmissiveTexture, TextureSRGB)
 		}
+		for _, index := range srgbExtensionTextureIndices(mat.Extensions) {
+			markIndex(index)
+		}
 	}
 	return spaces
+}
+
+// srgbExtensionTextureIndices returns the texture indices of color-valued
+// extension textures (specular color, sheen color, diffuse-transmission color)
+// which must be decoded as sRGB.
+func srgbExtensionTextureIndices(ext gltf.Extensions) []uint32 {
+	if ext == nil {
+		return nil
+	}
+	var indices []uint32
+	decodeColorTex := func(name, field string) {
+		raw, ok := ext[name]
+		if !ok {
+			return
+		}
+		body, err := jsonRawFromExt(raw)
+		if err != nil {
+			return
+		}
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(body, &fields) != nil {
+			return
+		}
+		texRaw, ok := fields[field]
+		if !ok {
+			return
+		}
+		var info extTexInfo
+		if json.Unmarshal(texRaw, &info) == nil && info.Index != nil {
+			indices = append(indices, *info.Index)
+		}
+	}
+	decodeColorTex("KHR_materials_specular", "specularColorTexture")
+	decodeColorTex("KHR_materials_sheen", "sheenColorTexture")
+	decodeColorTex("KHR_materials_diffuse_transmission", "diffuseTransmissionColorTexture")
+	return indices
 }
 
 func uploadTextures(queue *wgpu.Queue, arrays *MaterialTextureArrays, label string, doc *gltf.Document, spaces []TextureColorSpace, fsys fs.FS) ([]uint32, error) {
@@ -855,9 +899,11 @@ func buildMaterial(src *gltf.Material, textureLayers []uint32) Material {
 		out.RoughnessFactor = float32(pbr.RoughnessFactorOrDefault())
 		if pbr.BaseColorTexture != nil {
 			out.BaseColorLayer = textureLayers[pbr.BaseColorTexture.Index]
+			out.BaseTransform = readTexTransform(pbr.BaseColorTexture.Extensions)
 		}
 		if pbr.MetallicRoughnessTexture != nil {
 			out.MetallicRoughnessLayer = textureLayers[pbr.MetallicRoughnessTexture.Index]
+			out.MetallicRoughnessTransform = readTexTransform(pbr.MetallicRoughnessTexture.Extensions)
 		}
 	}
 	if src.NormalTexture != nil {
@@ -865,16 +911,20 @@ func buildMaterial(src *gltf.Material, textureLayers []uint32) Material {
 			out.NormalLayer = textureLayers[*src.NormalTexture.Index]
 		}
 		out.NormalScale = float32(src.NormalTexture.ScaleOrDefault())
+		out.NormalTransform = readTexTransform(src.NormalTexture.Extensions)
 	}
 	if src.OcclusionTexture != nil {
 		if src.OcclusionTexture.Index != nil {
 			out.OcclusionLayer = textureLayers[*src.OcclusionTexture.Index]
 		}
 		out.OcclusionStrength = float32(src.OcclusionTexture.StrengthOrDefault())
+		out.OcclusionTransform = readTexTransform(src.OcclusionTexture.Extensions)
 	}
 	if src.EmissiveTexture != nil {
 		out.EmissiveLayer = textureLayers[src.EmissiveTexture.Index]
+		out.EmissiveTransform = readTexTransform(src.EmissiveTexture.Extensions)
 	}
+	readMaterialExtensions(src.Extensions, &out, textureLayers)
 	if src.EmissiveFactor != [3]float64{} {
 		out.EmissiveFactor = [3]float32{float32(src.EmissiveFactor[0]), float32(src.EmissiveFactor[1]), float32(src.EmissiveFactor[2])}
 	}
@@ -890,6 +940,236 @@ func buildMaterial(src *gltf.Material, textureLayers []uint32) Material {
 	out.AlphaCutoff = float32(src.AlphaCutoffOrDefault())
 	out.DoubleSided = src.DoubleSided
 	return out
+}
+
+type extTexInfo struct {
+	Index *uint32 `json:"index"`
+}
+
+func extLayer(info *extTexInfo, layers []uint32) uint32 {
+	if info == nil || info.Index == nil || int(*info.Index) >= len(layers) {
+		return NoTextureLayer
+	}
+	return layers[*info.Index]
+}
+
+func readTexTransform(ext gltf.Extensions) TextureTransform {
+	transform := IdentityTextureTransform()
+	if ext == nil {
+		return transform
+	}
+	raw, ok := ext["KHR_texture_transform"]
+	if !ok {
+		return transform
+	}
+	body, err := jsonRawFromExt(raw)
+	if err != nil {
+		return transform
+	}
+	var decoded struct {
+		Offset   *[2]float32 `json:"offset"`
+		Rotation *float32    `json:"rotation"`
+		Scale    *[2]float32 `json:"scale"`
+		TexCoord *uint32     `json:"texCoord"`
+	}
+	if json.Unmarshal(body, &decoded) != nil {
+		return transform
+	}
+	if decoded.Offset != nil {
+		transform.Offset = *decoded.Offset
+	}
+	if decoded.Rotation != nil {
+		transform.Rotation = *decoded.Rotation
+	}
+	if decoded.Scale != nil {
+		transform.Scale = *decoded.Scale
+	}
+	if decoded.TexCoord != nil {
+		transform.UVSet = *decoded.TexCoord
+	}
+	return transform
+}
+
+func readMaterialExtensions(ext gltf.Extensions, out *Material, layers []uint32) {
+	if ext == nil {
+		return
+	}
+	decode := func(name string, target any) bool {
+		raw, ok := ext[name]
+		if !ok {
+			return false
+		}
+		body, err := jsonRawFromExt(raw)
+		if err != nil {
+			return false
+		}
+		return json.Unmarshal(body, target) == nil
+	}
+
+	var ior struct {
+		Ior *float32 `json:"ior"`
+	}
+	if decode("KHR_materials_ior", &ior) && ior.Ior != nil {
+		out.IOR = *ior.Ior
+	}
+	if _, ok := ext["KHR_materials_unlit"]; ok {
+		out.Unlit = true
+	}
+
+	var spec struct {
+		SpecularFactor       *float32    `json:"specularFactor"`
+		SpecularColorFactor  *[3]float32 `json:"specularColorFactor"`
+		SpecularTexture      *extTexInfo `json:"specularTexture"`
+		SpecularColorTexture *extTexInfo `json:"specularColorTexture"`
+	}
+	if decode("KHR_materials_specular", &spec) {
+		if spec.SpecularFactor != nil {
+			out.SpecularFactor = *spec.SpecularFactor
+		}
+		if spec.SpecularColorFactor != nil {
+			out.SpecularColorFactor = *spec.SpecularColorFactor
+		}
+		out.SpecularLayer = extLayer(spec.SpecularTexture, layers)
+		out.SpecularColorLayer = extLayer(spec.SpecularColorTexture, layers)
+	}
+
+	var trans struct {
+		TransmissionFactor  *float32    `json:"transmissionFactor"`
+		TransmissionTexture *extTexInfo `json:"transmissionTexture"`
+	}
+	if decode("KHR_materials_transmission", &trans) {
+		if trans.TransmissionFactor != nil {
+			out.TransmissionFactor = *trans.TransmissionFactor
+		}
+		out.TransmissionLayer = extLayer(trans.TransmissionTexture, layers)
+	}
+
+	var vol struct {
+		ThicknessFactor     *float32    `json:"thicknessFactor"`
+		AttenuationColor    *[3]float32 `json:"attenuationColor"`
+		AttenuationDistance *float32    `json:"attenuationDistance"`
+		ThicknessTexture    *extTexInfo `json:"thicknessTexture"`
+	}
+	if decode("KHR_materials_volume", &vol) {
+		if vol.ThicknessFactor != nil {
+			out.Thickness = *vol.ThicknessFactor
+		}
+		if vol.AttenuationColor != nil {
+			out.AttenuationColor = *vol.AttenuationColor
+		}
+		if vol.AttenuationDistance != nil {
+			out.AttenuationDistance = *vol.AttenuationDistance
+		}
+		out.ThicknessLayer = extLayer(vol.ThicknessTexture, layers)
+	}
+
+	var disp struct {
+		Dispersion *float32 `json:"dispersion"`
+	}
+	if decode("KHR_materials_dispersion", &disp) && disp.Dispersion != nil {
+		out.Dispersion = *disp.Dispersion
+	}
+
+	var aniso struct {
+		AnisotropyStrength *float32    `json:"anisotropyStrength"`
+		AnisotropyRotation *float32    `json:"anisotropyRotation"`
+		AnisotropyTexture  *extTexInfo `json:"anisotropyTexture"`
+	}
+	if decode("KHR_materials_anisotropy", &aniso) {
+		if aniso.AnisotropyStrength != nil {
+			out.AnisotropyStrength = *aniso.AnisotropyStrength
+		}
+		if aniso.AnisotropyRotation != nil {
+			out.AnisotropyRotation = *aniso.AnisotropyRotation
+		}
+		out.AnisotropyLayer = extLayer(aniso.AnisotropyTexture, layers)
+	}
+
+	var cc struct {
+		ClearcoatFactor           *float32    `json:"clearcoatFactor"`
+		ClearcoatRoughnessFactor  *float32    `json:"clearcoatRoughnessFactor"`
+		ClearcoatTexture          *extTexInfo `json:"clearcoatTexture"`
+		ClearcoatRoughnessTexture *extTexInfo `json:"clearcoatRoughnessTexture"`
+		ClearcoatNormalTexture    *struct {
+			Index *uint32  `json:"index"`
+			Scale *float32 `json:"scale"`
+		} `json:"clearcoatNormalTexture"`
+	}
+	if decode("KHR_materials_clearcoat", &cc) {
+		if cc.ClearcoatFactor != nil {
+			out.ClearcoatFactor = *cc.ClearcoatFactor
+		}
+		if cc.ClearcoatRoughnessFactor != nil {
+			out.ClearcoatRoughnessFactor = *cc.ClearcoatRoughnessFactor
+		}
+		out.ClearcoatLayer = extLayer(cc.ClearcoatTexture, layers)
+		out.ClearcoatRoughnessLayer = extLayer(cc.ClearcoatRoughnessTexture, layers)
+		if cc.ClearcoatNormalTexture != nil {
+			if cc.ClearcoatNormalTexture.Index != nil && int(*cc.ClearcoatNormalTexture.Index) < len(layers) {
+				out.ClearcoatNormalLayer = layers[*cc.ClearcoatNormalTexture.Index]
+			}
+			if cc.ClearcoatNormalTexture.Scale != nil {
+				out.ClearcoatNormalScale = *cc.ClearcoatNormalTexture.Scale
+			}
+		}
+	}
+
+	var sheen struct {
+		SheenColorFactor      *[3]float32 `json:"sheenColorFactor"`
+		SheenRoughnessFactor  *float32    `json:"sheenRoughnessFactor"`
+		SheenColorTexture     *extTexInfo `json:"sheenColorTexture"`
+		SheenRoughnessTexture *extTexInfo `json:"sheenRoughnessTexture"`
+	}
+	if decode("KHR_materials_sheen", &sheen) {
+		if sheen.SheenColorFactor != nil {
+			out.SheenColorFactor = *sheen.SheenColorFactor
+		}
+		if sheen.SheenRoughnessFactor != nil {
+			out.SheenRoughnessFactor = *sheen.SheenRoughnessFactor
+		}
+		out.SheenColorLayer = extLayer(sheen.SheenColorTexture, layers)
+		out.SheenRoughnessLayer = extLayer(sheen.SheenRoughnessTexture, layers)
+	}
+
+	var irid struct {
+		IridescenceFactor           *float32    `json:"iridescenceFactor"`
+		IridescenceIor              *float32    `json:"iridescenceIor"`
+		IridescenceThicknessMinimum *float32    `json:"iridescenceThicknessMinimum"`
+		IridescenceThicknessMaximum *float32    `json:"iridescenceThicknessMaximum"`
+		IridescenceTexture          *extTexInfo `json:"iridescenceTexture"`
+		IridescenceThicknessTexture *extTexInfo `json:"iridescenceThicknessTexture"`
+	}
+	if decode("KHR_materials_iridescence", &irid) {
+		if irid.IridescenceFactor != nil {
+			out.IridescenceFactor = *irid.IridescenceFactor
+		}
+		if irid.IridescenceIor != nil {
+			out.IridescenceIor = *irid.IridescenceIor
+		}
+		if irid.IridescenceThicknessMinimum != nil {
+			out.IridescenceThicknessMin = *irid.IridescenceThicknessMinimum
+		}
+		if irid.IridescenceThicknessMaximum != nil {
+			out.IridescenceThicknessMax = *irid.IridescenceThicknessMaximum
+		}
+		out.IridescenceLayer = extLayer(irid.IridescenceTexture, layers)
+		out.IridescenceThicknessLayer = extLayer(irid.IridescenceThicknessTexture, layers)
+	}
+
+	var difftrans struct {
+		DiffuseTransmissionFactor       *float32    `json:"diffuseTransmissionFactor"`
+		DiffuseTransmissionColorFactor  *[3]float32 `json:"diffuseTransmissionColorFactor"`
+		DiffuseTransmissionColorTexture *extTexInfo `json:"diffuseTransmissionColorTexture"`
+	}
+	if decode("KHR_materials_diffuse_transmission", &difftrans) {
+		if difftrans.DiffuseTransmissionFactor != nil {
+			out.DiffuseTransmissionFactor = *difftrans.DiffuseTransmissionFactor
+		}
+		if difftrans.DiffuseTransmissionColorFactor != nil {
+			out.DiffuseTransmissionColorFactor = *difftrans.DiffuseTransmissionColorFactor
+		}
+		out.DiffuseTransmissionColorLayer = extLayer(difftrans.DiffuseTransmissionColorTexture, layers)
+	}
 }
 
 func buildGltfPrimitive(doc *gltf.Document, prim *gltf.Primitive) ([]MeshVertex, error) {

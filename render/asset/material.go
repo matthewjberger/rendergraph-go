@@ -1,5 +1,10 @@
 package asset
 
+import (
+	"math"
+	"unsafe"
+)
+
 type AlphaMode uint8
 
 const (
@@ -7,6 +12,34 @@ const (
 	AlphaModeMask
 	AlphaModeBlend
 )
+
+const (
+	NormalMapFlipY        uint32 = 1
+	NormalMapTwoComponent uint32 = 2
+)
+
+// TextureTransform is the KHR_texture_transform UV transform for one texture
+// slot, applied as T(offset) * R(rotation) * S(scale) to homogeneous UVs.
+type TextureTransform struct {
+	Offset   [2]float32
+	Rotation float32
+	Scale    [2]float32
+	UVSet    uint32
+}
+
+func IdentityTextureTransform() TextureTransform {
+	return TextureTransform{Scale: [2]float32{1, 1}}
+}
+
+// packed returns the two-row mat3x2 form used by the shader. row0 carries the
+// uv_set selector in its w component, matching nightshade's texture_uv.
+func (t TextureTransform) packed() (row0 [4]float32, row1 [4]float32) {
+	cosR := float32(math.Cos(float64(t.Rotation)))
+	sinR := float32(math.Sin(float64(t.Rotation)))
+	row0 = [4]float32{cosR * t.Scale[0], sinR * t.Scale[1], t.Offset[0], float32(t.UVSet)}
+	row1 = [4]float32{-sinR * t.Scale[0], cosR * t.Scale[1], t.Offset[1], 0}
+	return
+}
 
 type Material struct {
 	BaseColor              [4]float32
@@ -29,6 +62,61 @@ type Material struct {
 	Unlit       bool
 
 	IOR float32
+
+	NormalMapFlags uint32
+
+	BaseTransform              TextureTransform
+	NormalTransform            TextureTransform
+	MetallicRoughnessTransform TextureTransform
+	OcclusionTransform         TextureTransform
+	EmissiveTransform          TextureTransform
+
+	// KHR_materials_specular
+	SpecularFactor      float32
+	SpecularColorFactor [3]float32
+	SpecularLayer       uint32
+	SpecularColorLayer  uint32
+
+	// KHR_materials_transmission / KHR_materials_volume / KHR_materials_dispersion
+	TransmissionFactor  float32
+	TransmissionLayer   uint32
+	Thickness           float32
+	ThicknessLayer      uint32
+	AttenuationColor    [3]float32
+	AttenuationDistance float32
+	Dispersion          float32
+
+	// KHR_materials_anisotropy
+	AnisotropyStrength float32
+	AnisotropyRotation float32
+	AnisotropyLayer    uint32
+
+	// KHR_materials_clearcoat
+	ClearcoatFactor          float32
+	ClearcoatRoughnessFactor float32
+	ClearcoatNormalScale     float32
+	ClearcoatLayer           uint32
+	ClearcoatRoughnessLayer  uint32
+	ClearcoatNormalLayer     uint32
+
+	// KHR_materials_sheen
+	SheenColorFactor     [3]float32
+	SheenRoughnessFactor float32
+	SheenColorLayer      uint32
+	SheenRoughnessLayer  uint32
+
+	// KHR_materials_iridescence
+	IridescenceFactor         float32
+	IridescenceIor            float32
+	IridescenceThicknessMin   float32
+	IridescenceThicknessMax   float32
+	IridescenceLayer          uint32
+	IridescenceThicknessLayer uint32
+
+	// KHR_materials_diffuse_transmission
+	DiffuseTransmissionFactor      float32
+	DiffuseTransmissionColorFactor [3]float32
+	DiffuseTransmissionColorLayer  uint32
 }
 
 func DefaultMaterial() Material {
@@ -46,6 +134,41 @@ func DefaultMaterial() Material {
 		AlphaCutoff:            0.5,
 		IOR:                    1.5,
 		EmissiveStrength:       1.0,
+
+		BaseTransform:              IdentityTextureTransform(),
+		NormalTransform:            IdentityTextureTransform(),
+		MetallicRoughnessTransform: IdentityTextureTransform(),
+		OcclusionTransform:         IdentityTextureTransform(),
+		EmissiveTransform:          IdentityTextureTransform(),
+
+		SpecularFactor:      1.0,
+		SpecularColorFactor: [3]float32{1, 1, 1},
+		SpecularLayer:       NoTextureLayer,
+		SpecularColorLayer:  NoTextureLayer,
+
+		TransmissionLayer: NoTextureLayer,
+		ThicknessLayer:    NoTextureLayer,
+		AttenuationColor:  [3]float32{1, 1, 1},
+
+		AnisotropyLayer: NoTextureLayer,
+
+		ClearcoatLayer:          NoTextureLayer,
+		ClearcoatRoughnessLayer: NoTextureLayer,
+		ClearcoatNormalLayer:    NoTextureLayer,
+		ClearcoatNormalScale:    1.0,
+
+		SheenColorFactor:    [3]float32{0, 0, 0},
+		SheenColorLayer:     NoTextureLayer,
+		SheenRoughnessLayer: NoTextureLayer,
+
+		IridescenceIor:            1.3,
+		IridescenceThicknessMin:   100.0,
+		IridescenceThicknessMax:   400.0,
+		IridescenceLayer:          NoTextureLayer,
+		IridescenceThicknessLayer: NoTextureLayer,
+
+		DiffuseTransmissionColorFactor: [3]float32{1, 1, 1},
+		DiffuseTransmissionColorLayer:  NoTextureLayer,
 	}
 }
 
@@ -63,6 +186,14 @@ func AlbedoMaterial(color [4]float32) Material {
 	return m
 }
 
+type texTransformGPU struct {
+	Row0 [4]float32
+	Row1 [4]float32
+}
+
+// MaterialGPU mirrors the WGSL Material struct (std430). The first 96 bytes are
+// the original core layout; extension fields are appended so the layout grows
+// without disturbing existing offsets.
 type MaterialGPU struct {
 	BaseColor      [4]float32
 	EmissiveFactor [3]float32
@@ -87,9 +218,66 @@ type MaterialGPU struct {
 	Pad1a            float32
 	Pad1b            float32
 	Pad1c            float32
+
+	NormalMapFlags     uint32
+	SpecularFactor     float32
+	SpecularLayer      uint32
+	SpecularColorLayer uint32
+
+	SpecularColorFactor [3]float32
+	TransmissionFactor  float32
+
+	TransmissionLayer   uint32
+	Thickness           float32
+	ThicknessLayer      uint32
+	AttenuationDistance float32
+
+	AttenuationColor [3]float32
+	Dispersion       float32
+
+	AnisotropyStrength    float32
+	AnisotropyRotationCos float32
+	AnisotropyRotationSin float32
+	AnisotropyLayer       uint32
+
+	ClearcoatFactor          float32
+	ClearcoatRoughnessFactor float32
+	ClearcoatNormalScale     float32
+	ClearcoatLayer           uint32
+
+	ClearcoatRoughnessLayer uint32
+	ClearcoatNormalLayer    uint32
+	SheenColorLayer         uint32
+	SheenRoughnessLayer     uint32
+
+	SheenColorFactor     [3]float32
+	SheenRoughnessFactor float32
+
+	IridescenceFactor       float32
+	IridescenceIor          float32
+	IridescenceThicknessMin float32
+	IridescenceThicknessMax float32
+
+	IridescenceLayer              uint32
+	IridescenceThicknessLayer     uint32
+	DiffuseTransmissionFactor     float32
+	DiffuseTransmissionColorLayer uint32
+
+	DiffuseTransmissionColorFactor [3]float32
+	Pad2                           float32
+
+	BaseTransform              texTransformGPU
+	NormalTransform            texTransformGPU
+	MetallicRoughnessTransform texTransformGPU
+	OcclusionTransform         texTransformGPU
+	EmissiveTransform          texTransformGPU
 }
 
-const MaterialGPUSize = uint64(96)
+const MaterialGPUSize = uint64(432)
+
+// Compile-time assertion that the Go layout matches the WGSL std430 stride.
+type _ [uintptr(MaterialGPUSize) - unsafe.Sizeof(MaterialGPU{})]byte
+type _ [unsafe.Sizeof(MaterialGPU{}) - uintptr(MaterialGPUSize)]byte
 
 func (m Material) ToGPU() MaterialGPU {
 	var alpha uint32
@@ -111,6 +299,15 @@ func (m Material) ToGPU() MaterialGPU {
 	if emissiveStrength <= 0 {
 		emissiveStrength = 1.0
 	}
+	cosR := float32(math.Cos(float64(m.AnisotropyRotation)))
+	sinR := float32(math.Sin(float64(m.AnisotropyRotation)))
+
+	baseRow0, baseRow1 := m.BaseTransform.packed()
+	normalRow0, normalRow1 := m.NormalTransform.packed()
+	mrRow0, mrRow1 := m.MetallicRoughnessTransform.packed()
+	occRow0, occRow1 := m.OcclusionTransform.packed()
+	emiRow0, emiRow1 := m.EmissiveTransform.packed()
+
 	return MaterialGPU{
 		BaseColor:              m.BaseColor,
 		EmissiveFactor:         m.EmissiveFactor,
@@ -128,5 +325,53 @@ func (m Material) ToGPU() MaterialGPU {
 		Unlit:                  unlit,
 		IOR:                    ior,
 		EmissiveStrength:       emissiveStrength,
+
+		NormalMapFlags:      m.NormalMapFlags,
+		SpecularFactor:      m.SpecularFactor,
+		SpecularLayer:       m.SpecularLayer,
+		SpecularColorLayer:  m.SpecularColorLayer,
+		SpecularColorFactor: m.SpecularColorFactor,
+
+		TransmissionFactor:  m.TransmissionFactor,
+		TransmissionLayer:   m.TransmissionLayer,
+		Thickness:           m.Thickness,
+		ThicknessLayer:      m.ThicknessLayer,
+		AttenuationDistance: m.AttenuationDistance,
+		AttenuationColor:    m.AttenuationColor,
+		Dispersion:          m.Dispersion,
+
+		AnisotropyStrength:    m.AnisotropyStrength,
+		AnisotropyRotationCos: cosR,
+		AnisotropyRotationSin: sinR,
+		AnisotropyLayer:       m.AnisotropyLayer,
+
+		ClearcoatFactor:          m.ClearcoatFactor,
+		ClearcoatRoughnessFactor: m.ClearcoatRoughnessFactor,
+		ClearcoatNormalScale:     m.ClearcoatNormalScale,
+		ClearcoatLayer:           m.ClearcoatLayer,
+		ClearcoatRoughnessLayer:  m.ClearcoatRoughnessLayer,
+		ClearcoatNormalLayer:     m.ClearcoatNormalLayer,
+
+		SheenColorFactor:     m.SheenColorFactor,
+		SheenRoughnessFactor: m.SheenRoughnessFactor,
+		SheenColorLayer:      m.SheenColorLayer,
+		SheenRoughnessLayer:  m.SheenRoughnessLayer,
+
+		IridescenceFactor:         m.IridescenceFactor,
+		IridescenceIor:            m.IridescenceIor,
+		IridescenceThicknessMin:   m.IridescenceThicknessMin,
+		IridescenceThicknessMax:   m.IridescenceThicknessMax,
+		IridescenceLayer:          m.IridescenceLayer,
+		IridescenceThicknessLayer: m.IridescenceThicknessLayer,
+
+		DiffuseTransmissionFactor:      m.DiffuseTransmissionFactor,
+		DiffuseTransmissionColorFactor: m.DiffuseTransmissionColorFactor,
+		DiffuseTransmissionColorLayer:  m.DiffuseTransmissionColorLayer,
+
+		BaseTransform:              texTransformGPU{Row0: baseRow0, Row1: baseRow1},
+		NormalTransform:            texTransformGPU{Row0: normalRow0, Row1: normalRow1},
+		MetallicRoughnessTransform: texTransformGPU{Row0: mrRow0, Row1: mrRow1},
+		OcclusionTransform:         texTransformGPU{Row0: occRow0, Row1: occRow1},
+		EmissiveTransform:          texTransformGPU{Row0: emiRow0, Row1: emiRow1},
 	}
 }
