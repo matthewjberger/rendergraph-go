@@ -37,9 +37,6 @@ func loadGltfBytes(engine *ecs.World, renderer *render.Renderer, label string, d
 	return spawnLoadedSceneNamed(engine, renderer, scene, label)
 }
 
-// drainKhronosPending uploads and spawns any model the Khronos browser finished
-// downloading on a background goroutine. It must run on the main thread because
-// it touches the GPU device and queue.
 func drainKhronosPending(worlds app.Worlds, renderer *render.Renderer) {
 	browser := *ecs.MustResource[*KhronosBrowser](worlds.Engine)
 	pending := browser.TakePending()
@@ -86,6 +83,10 @@ func loadGltfInto(engine *ecs.World, renderer *render.Renderer, path string) ([]
 }
 
 func spawnLoadedSceneNamed(engine *ecs.World, renderer *render.Renderer, scene *asset.LoadedScene, label string) ([]ecs.Entity, error) {
+	viewerMode := ecs.MustResource[render.Graphics](engine).ViewerMode
+	if viewerMode {
+		clearLoadedScenes(engine)
+	}
 	entities := asset.SpawnLoadedScene(engine, scene, renderer.Device)
 	baseName := strings.TrimSuffix(label, filepath.Ext(label))
 	nameMask := ecs.MustMaskOf[app.Name](engine)
@@ -103,6 +104,11 @@ func spawnLoadedSceneNamed(engine *ecs.World, renderer *render.Renderer, scene *
 		label, len(scene.Nodes), len(scene.Meshes), len(scene.Materials), len(scene.Animations), len(scene.Lights), len(scene.Cameras))
 	if len(scene.Roots) > 0 {
 		applyEntitySelection(engine, transform.FindGroupRoot(engine, entities[scene.Roots[0]]))
+	}
+	if viewerMode {
+		hud := ecs.MustResource[HudHandles](engine)
+		hud.ModelRoots = loadedSceneRoots(engine)
+		hud.FramePending = true
 	}
 	return entities, nil
 }

@@ -103,10 +103,6 @@ func editorApp() *app.App {
 			var bloomMipView func() *wgpu.TextureView
 			var fxaaOutputID render.ResourceID
 
-			// Passes declare their own read/write dependencies, so the graph
-			// schedules them by topology at compile time; this list only needs
-			// to register them, ordered so data-dependency outputs (bloom mip
-			// view, fxaa output) are produced before their consumers capture them.
 			steps := []struct {
 				name string
 				add  func() error

@@ -16,7 +16,7 @@ func createViewProjLayout(device *wgpu.Device) (*wgpu.BindGroupLayout, error) {
 		Label: "mesh view_proj bind group layout",
 		Entries: []wgpu.BindGroupLayoutEntry{{
 			Binding:    0,
-			Visibility: wgpu.ShaderStageVertex,
+			Visibility: wgpu.ShaderStageVertex | wgpu.ShaderStageFragment,
 			Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeUniform},
 		}},
 	})
@@ -208,6 +208,19 @@ func createIblBgLayout(device *wgpu.Device) (*wgpu.BindGroupLayout, error) {
 				Visibility: wgpu.ShaderStageFragment,
 				Sampler:    wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering},
 			},
+			{
+				Binding:    4,
+				Visibility: wgpu.ShaderStageFragment,
+				Texture: wgpu.TextureBindingLayout{
+					SampleType:    wgpu.TextureSampleTypeFloat,
+					ViewDimension: wgpu.TextureViewDimension2D,
+				},
+			},
+			{
+				Binding:    5,
+				Visibility: wgpu.ShaderStageFragment,
+				Sampler:    wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering},
+			},
 		},
 	})
 	if err != nil {
@@ -379,7 +392,7 @@ func createGlobalBindGroup(
 	return bg, nil
 }
 
-func createIblBindGroup(device *wgpu.Device, layout *wgpu.BindGroupLayout, ibl *IBL) (*wgpu.BindGroup, error) {
+func createIblBindGroup(device *wgpu.Device, layout *wgpu.BindGroupLayout, ibl *IBL, transmissionView *wgpu.TextureView, transmissionSampler *wgpu.Sampler) (*wgpu.BindGroup, error) {
 	bg, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 		Label:  "mesh ibl bind group",
 		Layout: layout,
@@ -388,6 +401,8 @@ func createIblBindGroup(device *wgpu.Device, layout *wgpu.BindGroupLayout, ibl *
 			{Binding: 1, TextureView: ibl.PrefilteredView},
 			{Binding: 2, TextureView: ibl.BrdfLutView},
 			{Binding: 3, Sampler: ibl.Sampler},
+			{Binding: 4, TextureView: transmissionView},
+			{Binding: 5, Sampler: transmissionSampler},
 		},
 	})
 	if err != nil {

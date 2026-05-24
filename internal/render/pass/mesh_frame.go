@@ -254,6 +254,66 @@ func ensureCullBindings(bucket *handleInstances, device *wgpu.Device, culling *m
 	return nil
 }
 
+func sceneHasTransmission(world *ecs.World) bool {
+	materialMask := ecs.MustMaskOf[asset.Material](world)
+	found := false
+	world.ForEach(materialMask, 0, func(entity ecs.Entity, table *ecs.Archetype, index int) {
+		if found {
+			return
+		}
+		materials, ok := ecs.Column[asset.Material](world, table)
+		if !ok {
+			return
+		}
+		if materials[index].TransmissionFactor > 0 {
+			found = true
+		}
+	})
+	return found
+}
+
+func ensureTransmissionTexture(state *meshPassState, device *wgpu.Device, width, height uint32) (bool, error) {
+	if width == 0 {
+		width = 1
+	}
+	if height == 0 {
+		height = 1
+	}
+	if state.transmissionTexture != nil && state.transmissionWidth == width && state.transmissionHeight == height {
+		return false, nil
+	}
+	if state.transmissionView != nil {
+		state.transmissionView.Release()
+		state.transmissionView = nil
+	}
+	if state.transmissionTexture != nil {
+		state.transmissionTexture.Release()
+		state.transmissionTexture = nil
+	}
+	texture, err := device.CreateTexture(&wgpu.TextureDescriptor{
+		Label:         "mesh transmission color",
+		Size:          wgpu.Extent3D{Width: width, Height: height, DepthOrArrayLayers: 1},
+		MipLevelCount: 1,
+		SampleCount:   1,
+		Dimension:     wgpu.TextureDimension2D,
+		Format:        render.HdrFormat,
+		Usage:         wgpu.TextureUsageCopyDst | wgpu.TextureUsageTextureBinding,
+	})
+	if err != nil {
+		return false, fmt.Errorf("mesh pass: transmission texture: %w", err)
+	}
+	view, err := texture.CreateView(nil)
+	if err != nil {
+		texture.Release()
+		return false, fmt.Errorf("mesh pass: transmission view: %w", err)
+	}
+	state.transmissionTexture = texture
+	state.transmissionView = view
+	state.transmissionWidth = width
+	state.transmissionHeight = height
+	return true, nil
+}
+
 func meshExecute(state *meshPassState, context *render.PassContext) error {
 
 	dispatchClusterPasses(state, context)
@@ -276,6 +336,25 @@ func meshExecute(state *meshPassState, context *render.PassContext) error {
 	depthAttachment, err := context.DepthAttachment("depth")
 	if err != nil {
 		return err
+	}
+
+	colorResource, err := context.Resource("color")
+	if err != nil {
+		return err
+	}
+	resized, err := ensureTransmissionTexture(state, context.Device, colorResource.Width, colorResource.Height)
+	if err != nil {
+		return err
+	}
+	if resized {
+		if state.iblBindGroup != nil {
+			state.iblBindGroup.Release()
+		}
+		iblBindGroup, err := createIblBindGroup(context.Device, state.iblBgLayout, state.ibl, state.transmissionView, state.transmissionSampler)
+		if err != nil {
+			return err
+		}
+		state.iblBindGroup = iblBindGroup
 	}
 
 	if hasGeometry && meshRunPrepass && state.depthPrepass != nil {
@@ -327,6 +406,14 @@ func meshExecute(state *meshPassState, context *render.PassContext) error {
 	}
 	pass.End()
 	pass.Release()
+
+	if state.transmissionTexture != nil && colorResource.Texture != nil && sceneHasTransmission(context.World) {
+		context.Encoder.CopyTextureToTexture(
+			&wgpu.ImageCopyTexture{Texture: colorResource.Texture, MipLevel: 0, Origin: wgpu.Origin3D{}, Aspect: wgpu.TextureAspectAll},
+			&wgpu.ImageCopyTexture{Texture: state.transmissionTexture, MipLevel: 0, Origin: wgpu.Origin3D{}, Aspect: wgpu.TextureAspectAll},
+			&wgpu.Extent3D{Width: state.transmissionWidth, Height: state.transmissionHeight, DepthOrArrayLayers: 1},
+		)
+	}
 	return nil
 }
 
@@ -336,6 +423,15 @@ func meshRelease(state *meshPassState) {
 	}
 	if state.iblBindGroup != nil {
 		state.iblBindGroup.Release()
+	}
+	if state.transmissionView != nil {
+		state.transmissionView.Release()
+	}
+	if state.transmissionTexture != nil {
+		state.transmissionTexture.Release()
+	}
+	if state.transmissionSampler != nil {
+		state.transmissionSampler.Release()
 	}
 	if state.iblBgLayout != nil {
 		state.iblBgLayout.Release()

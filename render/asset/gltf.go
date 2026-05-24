@@ -134,10 +134,7 @@ func LoadGltfFile(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAssets, sk
 type LoadGltfOptions struct {
 	Label   string
 	BaseDir string
-	// FS resolves external buffers and images. When nil it defaults to
-	// os.DirFS(BaseDir), so callers can supply an embed.FS or fstest.MapFS
-	// instead of the host filesystem.
-	FS fs.FS
+	FS      fs.FS
 }
 
 func LoadGltfReader(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAssets, skinnedAssets *SkinnedMeshAssets, arrays *MaterialTextureArrays, label string, r io.Reader) (*LoadedScene, error) {
@@ -788,9 +785,6 @@ func classifyTextures(doc *gltf.Document) []TextureColorSpace {
 	return spaces
 }
 
-// srgbExtensionTextureIndices returns the texture indices of color-valued
-// extension textures (specular color, sheen color, diffuse-transmission color)
-// which must be decoded as sRGB.
 func srgbExtensionTextureIndices(ext gltf.Extensions) []uint32 {
 	if ext == nil {
 		return nil

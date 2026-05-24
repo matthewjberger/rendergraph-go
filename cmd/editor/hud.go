@@ -111,6 +111,16 @@ func (c *HudContext) refreshModeButtons() {
 	setModeColor(c.UI, c.Hud.ScaleButton, c.Gizmo.Mode == render.GizmoScale)
 }
 
+func (c *HudContext) refreshViewerCheckbox() {
+	on := ecs.MustResource[render.Graphics](c.Engine).ViewerMode
+	ui.SetVisible(c.UI, c.Hud.ViewerCheck, on)
+	if interactive, ok := ecs.Get[ui.Interactive](c.UI, c.Hud.ViewerButton); ok && interactive.Hovered {
+		c.setColor(c.Hud.ViewerButton, [4]float32{0.20, 0.22, 0.28, 1})
+	} else {
+		c.setColor(c.Hud.ViewerButton, [4]float32{0.12, 0.13, 0.16, 1})
+	}
+}
+
 func setModeColor(world *ecs.World, entity ecs.Entity, active bool) {
 	color, ok := ecs.GetMut[ui.Color](world, entity)
 	if !ok {

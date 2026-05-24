@@ -3,17 +3,13 @@ package ui
 import "github.com/matthewjberger/indigo/ecs"
 
 // ScrollArea is a clipping viewport with a vertically scrollable content column.
-// Build it inside a parent, then add row children under Content (via a Builder
-// pushed onto Content). Call Update each frame with the total content height to
-// handle wheel input, clamp the offset, and scroll the content.
 type ScrollArea struct {
 	Viewport ecs.Entity
 	Content  ecs.Entity
 	Offset   float32
 }
 
-// NewScrollArea builds a viewport of the given size that clips its descendants,
-// plus a top-anchored content column that may extend beyond the viewport.
+// NewScrollArea builds a viewport of the given size that clips its descendants.
 func NewScrollArea(b *Builder, width, height float32) ScrollArea {
 	viewport := b.Node(Node{
 		Width: width, Height: height,
@@ -32,8 +28,6 @@ func NewScrollArea(b *Builder, width, height float32) ScrollArea {
 }
 
 // Update handles wheel scrolling while the pointer is over the viewport, clamps
-// the offset to the content height, and applies it to the content node. It
-// returns whether it consumed the wheel input so the caller can clear it.
 func (s *ScrollArea) Update(world *ecs.World, pointerX, pointerY, wheel, contentHeight float32) bool {
 	viewport, ok := ecs.Get[Node](world, s.Viewport)
 	if !ok {

@@ -5,7 +5,6 @@ import (
 	"unsafe"
 )
 
-// slice stays a reflect-allocated []T so the GC keeps pointers inside T alive; dataPtr aliases its backing array and must be refreshed after every grow.
 type column struct {
 	slice    reflect.Value
 	elemType reflect.Type

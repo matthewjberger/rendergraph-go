@@ -191,6 +191,14 @@ func handleUiClicks(worlds app.Worlds) {
 			hud.OpenMenu = toggleMenu(hud.OpenMenu, menuViewOpen)
 		case hud.AssetsButton:
 			hud.OpenMenu = toggleMenu(hud.OpenMenu, menuAssetsOpen)
+		case hud.ViewerButton:
+			settings := ecs.MustResource[render.Graphics](worlds.Engine)
+			settings.ViewerMode = !settings.ViewerMode
+			hud.OpenMenu = menuClosed
+			if settings.ViewerMode {
+				hud.ModelRoots = loadedSceneRoots(worlds.Engine)
+				hud.FramePending = true
+			}
 		default:
 			if handleMenuItem(worlds, hud, evt.Entity) {
 				hud.OpenMenu = menuClosed

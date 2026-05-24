@@ -30,6 +30,13 @@ type meshPassState struct {
 	globalBindGroup *wgpu.BindGroup
 	iblBindGroup    *wgpu.BindGroup
 
+	ibl                 *IBL
+	transmissionTexture *wgpu.Texture
+	transmissionView    *wgpu.TextureView
+	transmissionSampler *wgpu.Sampler
+	transmissionWidth   uint32
+	transmissionHeight  uint32
+
 	clusters    *clusterResources
 	meshCulling *meshCullingPipeline
 
@@ -75,7 +82,28 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 	}
 	state.iblBgLayout = iblBgLayout
 
-	iblBindGroup, err := createIblBindGroup(device, iblBgLayout, ibl)
+	state.ibl = ibl
+
+	transmissionSampler, err := device.CreateSampler(&wgpu.SamplerDescriptor{
+		Label:         "mesh transmission sampler",
+		AddressModeU:  wgpu.AddressModeClampToEdge,
+		AddressModeV:  wgpu.AddressModeClampToEdge,
+		AddressModeW:  wgpu.AddressModeClampToEdge,
+		MagFilter:     wgpu.FilterModeLinear,
+		MinFilter:     wgpu.FilterModeLinear,
+		MipmapFilter:  wgpu.MipmapFilterModeNearest,
+		MaxAnisotropy: 1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	state.transmissionSampler = transmissionSampler
+
+	if _, err := ensureTransmissionTexture(state, device, 1, 1); err != nil {
+		return nil, err
+	}
+
+	iblBindGroup, err := createIblBindGroup(device, iblBgLayout, ibl, state.transmissionView, state.transmissionSampler)
 	if err != nil {
 		return nil, err
 	}

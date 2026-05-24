@@ -243,6 +243,8 @@ var<private> POISSON_8: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
 @group(3) @binding(1) var prefiltered_env: texture_cube<f32>;
 @group(3) @binding(2) var brdf_lut:        texture_2d<f32>;
 @group(3) @binding(3) var ibl_sampler:     sampler;
+@group(3) @binding(4) var transmission_color_texture: texture_2d<f32>;
+@group(3) @binding(5) var transmission_color_sampler: sampler;
 
 const NO_LAYER: u32 = 0xFFFFFFFFu;
 const PI: f32 = 3.14159265359;
@@ -354,6 +356,86 @@ fn geometry_smith(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32) -> f
 
 fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
     return f0 + (vec3<f32>(1.0) - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+fn apply_ior_to_roughness(roughness: f32, ior: f32) -> f32 {
+    return roughness * clamp(ior * 2.0 - 2.0, 0.0, 1.0);
+}
+
+fn apply_volume_attenuation(radiance: vec3<f32>, transmission_distance: f32, attenuation_color: vec3<f32>, attenuation_distance: f32) -> vec3<f32> {
+    if (attenuation_distance <= 0.0) {
+        return radiance;
+    }
+    let attenuation_coefficient = -log(max(attenuation_color, vec3<f32>(0.0001))) / attenuation_distance;
+    let transmittance = exp(-attenuation_coefficient * transmission_distance);
+    return transmittance * radiance;
+}
+
+fn get_transmission_sample(reflection: vec3<f32>, roughness: f32, ior: f32) -> vec3<f32> {
+    let transmission_roughness = apply_ior_to_roughness(roughness, ior);
+    return textureSampleLevel(prefiltered_env, ibl_sampler, reflection, transmission_roughness * MAX_REFLECTION_LOD).rgb;
+}
+
+fn get_screen_space_transmission(world_pos: vec3<f32>, refracted_dir: vec3<f32>, thickness: f32, ior: f32, roughness: f32) -> vec3<f32> {
+    let exit_world = world_pos + refracted_dir * max(thickness, 0.001);
+    let exit_clip = view_proj * vec4<f32>(exit_world, 1.0);
+    let ibl_sample = get_transmission_sample(refracted_dir, roughness, ior);
+    if (exit_clip.w <= 0.0001) {
+        return ibl_sample;
+    }
+    let exit_ndc = exit_clip.xyz / exit_clip.w;
+    let uv = vec2<f32>(exit_ndc.x * 0.5 + 0.5, 0.5 - exit_ndc.y * 0.5);
+    let clamped_uv = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
+    let scene_sample = textureSampleLevel(transmission_color_texture, transmission_color_sampler, clamped_uv, 0.0).rgb;
+    let edge_dist = min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y));
+    let blend = clamp(edge_dist * 8.0, 0.0, 1.0);
+    return mix(ibl_sample, scene_sample, blend);
+}
+
+fn refract_safe(view: vec3<f32>, normal: vec3<f32>, eta: f32) -> vec3<f32> {
+    let refraction = refract(-view, normal, eta);
+    let len_sq = dot(refraction, refraction);
+    if (len_sq > 0.0001) {
+        return refraction / sqrt(len_sq);
+    }
+    return -view;
+}
+
+fn get_ibl_volume_refraction(
+    normal: vec3<f32>,
+    view: vec3<f32>,
+    world_pos: vec3<f32>,
+    roughness: f32,
+    base_color: vec3<f32>,
+    f0: vec3<f32>,
+    ior: f32,
+    dispersion: f32,
+    thickness: f32,
+    attenuation_color: vec3<f32>,
+    attenuation_distance: f32,
+) -> vec3<f32> {
+    let transmission_distance = thickness;
+    var transmitted_light: vec3<f32>;
+    if (dispersion > 0.0) {
+        let half_spread = (ior - 1.0) * 0.025 * dispersion;
+        let ior_r = ior - half_spread;
+        let ior_b = ior + half_spread;
+        let dir_r = refract_safe(view, normal, 1.0 / ior_r);
+        let dir_g = refract_safe(view, normal, 1.0 / ior);
+        let dir_b = refract_safe(view, normal, 1.0 / ior_b);
+        let r = get_screen_space_transmission(world_pos, dir_r, transmission_distance, ior_r, roughness).r;
+        let g = get_screen_space_transmission(world_pos, dir_g, transmission_distance, ior, roughness).g;
+        let b = get_screen_space_transmission(world_pos, dir_b, transmission_distance, ior_b, roughness).b;
+        transmitted_light = vec3<f32>(r, g, b);
+    } else {
+        let dir = refract_safe(view, normal, 1.0 / ior);
+        transmitted_light = get_screen_space_transmission(world_pos, dir, transmission_distance, ior, roughness);
+    }
+    let attenuated_color = apply_volume_attenuation(transmitted_light, transmission_distance, attenuation_color, attenuation_distance);
+    let n_dot_v = clamp(dot(normal, view), 0.001, 1.0);
+    let brdf = textureSampleLevel(brdf_lut, ibl_sampler, vec2<f32>(n_dot_v, roughness), 0.0).rg;
+    let specular_color = f0 * brdf.x + brdf.y;
+    return (vec3<f32>(1.0) - specular_color) * attenuated_color * base_color;
 }
 
 fn fresnel_schlick_roughness(cos_theta: f32, f0: vec3<f32>, roughness: f32) -> vec3<f32> {
@@ -995,15 +1077,12 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
         if (mat.transmission_layer != NO_LAYER) {
             trans = trans * sample_linear_layer(mat.transmission_layer, in.uv).r;
         }
-        let refr_dir = refract(-v, n, 1.0 / mat.ior);
-        let trans_roughness = roughness * clamp(mat.ior * 2.0 - 2.0, 0.0, 1.0);
-        var transmitted = textureSampleLevel(prefiltered_env, ibl_sampler, refr_dir, trans_roughness * MAX_REFLECTION_LOD).rgb;
-        if (mat.attenuation_distance > 0.0) {
-            let att = -log(max(mat.attenuation_color, vec3<f32>(0.0001))) / mat.attenuation_distance;
-            transmitted = transmitted * exp(-att * max(mat.thickness, 0.001));
-        }
-        let transmitted_attenuated = transmitted * (vec3<f32>(1.0) - fss_ess) * albedo;
-        diffuse_ibl = mix(diffuse_ibl, transmitted_attenuated, trans);
+        let transmission = get_ibl_volume_refraction(
+            n, v, in.world_pos, roughness, albedo, f0, mat.ior, mat.dispersion,
+            mat.thickness, mat.attenuation_color, mat.attenuation_distance,
+        );
+        let transmission_attenuated = transmission * (vec3<f32>(1.0) - fss_ess);
+        diffuse_ibl = mix(diffuse_ibl, transmission_attenuated, trans);
     }
 
     let specular_ibl = prefiltered * fss_ess * specular_strength;

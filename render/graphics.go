@@ -12,6 +12,8 @@ type Graphics struct {
 	ShowNormals   bool
 	ShowSkeletons bool
 
+	ViewerMode bool
+
 	Exposure    float32
 	FxaaEnabled bool
 	Bloom       Bloom
@@ -55,6 +57,7 @@ func DefaultGraphics() Graphics {
 		ShowBounds:    false,
 		ShowNormals:   false,
 		ShowSkeletons: false,
+		ViewerMode:    true,
 		Exposure:      1.0,
 		FxaaEnabled:   true,
 		Bloom: Bloom{
@@ -104,6 +107,8 @@ func UpdateGraphicsToggles(world *ecs.World) {
 			settings.ShowNormals = !settings.ShowNormals
 		case 'K':
 			settings.ShowSkeletons = !settings.ShowSkeletons
+		case 'V':
+			settings.ViewerMode = !settings.ViewerMode
 		}
 	}
 }

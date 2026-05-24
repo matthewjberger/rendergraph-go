@@ -1,7 +1,5 @@
 /editor.exe
 /editor
-/breakout.exe
-/breakout
 *.log
-site/*/main.wasm
-site/*/wasm_exec.js
+site/main.wasm
+site/wasm_exec.js

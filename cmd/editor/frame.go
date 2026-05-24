@@ -7,9 +7,6 @@ import (
 	"github.com/matthewjberger/indigo/render"
 )
 
-// updateEditorFrame runs the per-frame editor update shared by the native and
-// wasm loops: drain pending downloads, sync UI input, tick the worlds, and
-// refresh the HUD. It returns whether the user requested the editor to exit.
 func updateEditorFrame(worlds app.Worlds, renderer *render.Renderer, demo *app.App, delta float32) bool {
 	drainKhronosPending(worlds, renderer)
 	syncUiPointer(worlds)
@@ -18,11 +15,16 @@ func updateEditorFrame(worlds app.Worlds, renderer *render.Renderer, demo *app.A
 	ctx.updateTreeScroll()
 
 	app.TickFrame(worlds, demo, delta)
+	if ctx.Hud.FramePending {
+		frameCameraOnRoots(worlds.Engine, ctx.Hud.ModelRoots)
+		ctx.Hud.FramePending = false
+	}
 	handleRightClick(worlds)
 	driveTextInputs(worlds)
 	handleUiClicks(worlds)
 	ctx.refreshFps()
 	ctx.refreshModeButtons()
+	ctx.refreshViewerCheckbox()
 	ctx.refreshMenuPopups()
 	ctx.refreshInteractiveHovers()
 	ctx.refreshEntityTree()
@@ -33,8 +35,6 @@ func updateEditorFrame(worlds app.Worlds, renderer *render.Renderer, demo *app.A
 	return ctx.Hud.RequestExit
 }
 
-// finishEditorFrame runs the post-render tail shared by both loops: process the
-// picking readback, apply any pick result, and advance to the next frame.
 func finishEditorFrame(worlds app.Worlds, renderer *render.Renderer) {
 	pass.ProcessPickingReadback(renderer, worlds.Engine)
 	if picking := ecs.MustResource[*pass.Picking](worlds.Engine); (*picking).Result != nil {

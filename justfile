@@ -12,26 +12,24 @@ run $project="editor":
 build $project="editor":
     go build ./cmd/{{project}}
 
-# Builds the named app's wasm bundle into site/<project>/ (Windows).
+# Builds the editor wasm bundle into site/ (Windows).
 [windows]
-build-wasm $project="editor":
-    New-Item -ItemType Directory -Force -Path site/{{project}} | Out-Null
-    $env:GOOS = "js"; $env:GOARCH = "wasm"; go build -o site/{{project}}/main.wasm ./cmd/{{project}}
-    Copy-Item "$((go env GOROOT))/lib/wasm/wasm_exec.js" site/{{project}}/wasm_exec.js
+build-wasm:
+    $env:GOOS = "js"; $env:GOARCH = "wasm"; go build -o site/main.wasm ./cmd/editor
+    Copy-Item "$((go env GOROOT))/lib/wasm/wasm_exec.js" site/wasm_exec.js
 
-# Builds the named app's wasm bundle into site/<project>/ (Unix).
+# Builds the editor wasm bundle into site/ (Unix).
 [unix]
-build-wasm $project="editor":
-    mkdir -p site/{{project}}
-    GOOS=js GOARCH=wasm go build -o site/{{project}}/main.wasm ./cmd/{{project}}
-    cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/{{project}}/wasm_exec.js
+build-wasm:
+    GOOS=js GOARCH=wasm go build -o site/main.wasm ./cmd/editor
+    cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/wasm_exec.js
 
 # Serves site/ on http://localhost:8080
 serve:
     go run ./cmd/serve
 
-# Builds the named app's wasm bundle and serves site/.
-run-wasm $project="editor": (build-wasm project)
+# Builds the editor wasm bundle and serves site/.
+run-wasm: build-wasm
     just serve
 
 # Runs go vet and fails on unformatted files (Windows)
@@ -98,12 +96,12 @@ book-clean:
 [windows]
 clean:
     Remove-Item -Force -ErrorAction SilentlyContinue indigo.exe
-    Remove-Item -Force -ErrorAction SilentlyContinue breakout.exe
+    Remove-Item -Force -ErrorAction SilentlyContinue editor.exe
 
 # Removes any built binaries (Unix)
 [unix]
 clean:
-    rm -f indigo indigo.exe breakout breakout.exe
+    rm -f indigo indigo.exe editor editor.exe
 
 # Displays Go tool version
 @versions:

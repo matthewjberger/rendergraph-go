@@ -25,20 +25,16 @@ const (
 )
 
 type Node struct {
-	X, Y          float32
-	Width, Height float32
-	Anchor        Anchor
-	Padding       float32
-	Spacing       float32
-	Layout        LayoutMode
-	Grow          float32
-	ZIndex        int32
-	// Hidden hides this node and its whole subtree. ClipChildren confines
-	// descendant rendering to this node's resolved rect.
-	Hidden       bool
-	ClipChildren bool
-	// Resolved, HiddenResolved and ClipResolved are computed by LayoutSystem;
-	// do not set them directly.
+	X, Y           float32
+	Width, Height  float32
+	Anchor         Anchor
+	Padding        float32
+	Spacing        float32
+	Layout         LayoutMode
+	Grow           float32
+	ZIndex         int32
+	Hidden         bool
+	ClipChildren   bool
 	Resolved       Rect
 	ClipResolved   Rect
 	HiddenResolved bool
@@ -88,7 +84,6 @@ type TextCommitted struct {
 }
 
 // SetVisible shows or hides a node and its whole subtree. It marks layout dirty
-// only when the state actually changes, so it is cheap to call every frame.
 func SetVisible(world *ecs.World, entity ecs.Entity, visible bool) {
 	node, ok := ecs.GetMut[Node](world, entity)
 	if !ok {

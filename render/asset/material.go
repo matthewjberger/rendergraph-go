@@ -19,7 +19,6 @@ const (
 )
 
 // TextureTransform is the KHR_texture_transform UV transform for one texture
-// slot, applied as T(offset) * R(rotation) * S(scale) to homogeneous UVs.
 type TextureTransform struct {
 	Offset   [2]float32
 	Rotation float32
@@ -31,8 +30,6 @@ func IdentityTextureTransform() TextureTransform {
 	return TextureTransform{Scale: [2]float32{1, 1}}
 }
 
-// packed returns the two-row mat3x2 form used by the shader. row0 carries the
-// uv_set selector in its w component, matching nightshade's texture_uv.
 func (t TextureTransform) packed() (row0 [4]float32, row1 [4]float32) {
 	cosR := float32(math.Cos(float64(t.Rotation)))
 	sinR := float32(math.Sin(float64(t.Rotation)))
@@ -71,13 +68,11 @@ type Material struct {
 	OcclusionTransform         TextureTransform
 	EmissiveTransform          TextureTransform
 
-	// KHR_materials_specular
 	SpecularFactor      float32
 	SpecularColorFactor [3]float32
 	SpecularLayer       uint32
 	SpecularColorLayer  uint32
 
-	// KHR_materials_transmission / KHR_materials_volume / KHR_materials_dispersion
 	TransmissionFactor  float32
 	TransmissionLayer   uint32
 	Thickness           float32
@@ -86,12 +81,10 @@ type Material struct {
 	AttenuationDistance float32
 	Dispersion          float32
 
-	// KHR_materials_anisotropy
 	AnisotropyStrength float32
 	AnisotropyRotation float32
 	AnisotropyLayer    uint32
 
-	// KHR_materials_clearcoat
 	ClearcoatFactor          float32
 	ClearcoatRoughnessFactor float32
 	ClearcoatNormalScale     float32
@@ -99,13 +92,11 @@ type Material struct {
 	ClearcoatRoughnessLayer  uint32
 	ClearcoatNormalLayer     uint32
 
-	// KHR_materials_sheen
 	SheenColorFactor     [3]float32
 	SheenRoughnessFactor float32
 	SheenColorLayer      uint32
 	SheenRoughnessLayer  uint32
 
-	// KHR_materials_iridescence
 	IridescenceFactor         float32
 	IridescenceIor            float32
 	IridescenceThicknessMin   float32
@@ -113,14 +104,10 @@ type Material struct {
 	IridescenceLayer          uint32
 	IridescenceThicknessLayer uint32
 
-	// KHR_materials_diffuse_transmission
 	DiffuseTransmissionFactor      float32
 	DiffuseTransmissionColorFactor [3]float32
 	DiffuseTransmissionColorLayer  uint32
 
-	// Alpha threshold above which a BLEND-mode fragment writes depth in the
-	// blend-opaque prepass, so near-opaque parts of transparent surfaces occlude
-	// the OIT fragments behind them.
 	BlendOpaqueAlphaThreshold float32
 }
 
@@ -198,9 +185,7 @@ type texTransformGPU struct {
 	Row1 [4]float32
 }
 
-// MaterialGPU mirrors the WGSL Material struct (std430). The first 96 bytes are
-// the original core layout; extension fields are appended so the layout grows
-// without disturbing existing offsets.
+// MaterialGPU mirrors the WGSL Material struct (std430).
 type MaterialGPU struct {
 	BaseColor      [4]float32
 	EmissiveFactor [3]float32
@@ -282,7 +267,6 @@ type MaterialGPU struct {
 
 const MaterialGPUSize = uint64(432)
 
-// Compile-time assertion that the Go layout matches the WGSL std430 stride.
 type _ [uintptr(MaterialGPUSize) - unsafe.Sizeof(MaterialGPU{})]byte
 type _ [unsafe.Sizeof(MaterialGPU{}) - uintptr(MaterialGPUSize)]byte
 

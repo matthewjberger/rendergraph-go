@@ -32,9 +32,6 @@ type khronosRawEntry struct {
 }
 
 // KhronosEntry is a single browsable model from the glTF-Sample-Assets index.
-// GlbURL points at the self-contained glTF-Binary variant when present;
-// otherwise GltfFolderFilename names the multi-file glTF variant relative to
-// the model's glTF folder.
 type KhronosEntry struct {
 	Label              string
 	Name               string
@@ -43,9 +40,6 @@ type KhronosEntry struct {
 }
 
 // PendingKhronos is a downloaded model awaiting upload on the main thread.
-// GltfBytes holds the .glb or .gltf payload; Resources maps each external
-// buffer/image URI (path-unescaped, matching the importer's FS lookup) to its
-// bytes. Resources is empty for self-contained GLB downloads.
 type PendingKhronos struct {
 	DisplayName string
 	GltfBytes   []byte
@@ -53,8 +47,6 @@ type PendingKhronos struct {
 }
 
 // KhronosBrowser fetches the Khronos glTF-Sample-Assets index and individual
-// models over HTTP on background goroutines, publishing results into slots the
-// main thread drains. It mirrors nightshade's SampleBrowser.
 type KhronosBrowser struct {
 	mu       sync.Mutex
 	status   khronosIndexStatus
@@ -100,8 +92,7 @@ func (b *KhronosBrowser) IndexError() string {
 	return ""
 }
 
-// LoadingStatus returns the display name of the model currently downloading,
-// or "" when idle.
+// LoadingStatus returns the display name of the model currently downloading.
 func (b *KhronosBrowser) LoadingStatus() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -117,9 +108,7 @@ func (b *KhronosBrowser) TakePending() *PendingKhronos {
 	return pending
 }
 
-// FetchEntry begins downloading the given entry, preferring the GLB variant and
-// falling back to the multi-file glTF folder. It is a no-op while another
-// download is in flight.
+// FetchEntry begins downloading the given entry.
 func (b *KhronosBrowser) FetchEntry(entry KhronosEntry) {
 	if entry.GlbURL != "" {
 		b.startGlbFetch(entry.Label, entry.GlbURL)
@@ -247,9 +236,6 @@ func khronosEntriesFromRaw(raw []khronosRawEntry) []KhronosEntry {
 	return entries
 }
 
-// externalURIsFromGltf returns the external buffer and image URIs referenced by
-// a glTF JSON payload, skipping embedded data URIs. Mirrors nightshade's
-// external_uris_from_gltf.
 func externalURIsFromGltf(gltfBytes []byte) []string {
 	var doc struct {
 		Buffers []struct {

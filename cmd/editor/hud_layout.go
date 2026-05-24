@@ -37,6 +37,9 @@ type HudHandles struct {
 	EditButton      ecs.Entity
 	ViewButton      ecs.Entity
 	AssetsButton    ecs.Entity
+	ViewerButton    ecs.Entity
+	ViewerCheck     ecs.Entity
+	ViewerLabel     ecs.Entity
 	TranslateButton ecs.Entity
 	RotateButton    ecs.Entity
 	ScaleButton     ecs.Entity
@@ -74,6 +77,9 @@ type HudHandles struct {
 	RequestExit     bool
 	NameFocusedPrev bool
 
+	FramePending bool
+	ModelRoots   []ecs.Entity
+
 	TreeScrollPixels float32
 	TreeScrollIndex  int
 }
@@ -101,7 +107,7 @@ func buildHud(world *ecs.World) HudHandles {
 
 	menuBar := b.Node(ui.Node{
 		X: 0, Y: 0,
-		Width: 360, Height: hudTopBarHeight,
+		Width: 520, Height: hudTopBarHeight,
 		Anchor:  ui.AnchorTopLeft,
 		Layout:  ui.LayoutRow,
 		Padding: 6, Spacing: 4,
@@ -111,6 +117,14 @@ func buildHud(world *ecs.World) HudHandles {
 	h.EditButton = buildMenuButton(b, "EDIT")
 	h.ViewButton = buildMenuButton(b, "VIEW")
 	h.AssetsButton = buildMenuButton(b, "ASSETS")
+	h.ViewerButton, h.ViewerCheck = buildCheckbox(b)
+	h.ViewerLabel = b.Node(ui.Node{Width: 70, Height: 24}).
+		Color(ui.Color{RGBA: [4]float32{0, 0, 0, 0}}).
+		Text(ui.Text{
+			Content: "VIEWER",
+			Color:   [4]float32{0.85, 0.88, 0.94, 1},
+			Scale:   1.4,
+		}).Entity()
 	b.Pop()
 
 	modeBar := b.Node(ui.Node{
@@ -256,6 +270,21 @@ func buildMenuButton(b *ui.Builder, text string) ecs.Entity {
 			Color:   [4]float32{0.85, 0.88, 0.94, 1},
 			Scale:   1.4,
 		}).Entity()
+}
+
+func buildCheckbox(b *ui.Builder) (ecs.Entity, ecs.Entity) {
+	box := b.Node(ui.Node{Width: 20, Height: 20}).
+		Color(ui.Color{RGBA: [4]float32{0.12, 0.13, 0.16, 1}}).
+		Interactive().
+		Entity()
+	b.Push(box)
+	inner := b.Node(ui.Node{
+		X: 4, Y: 4,
+		Width: 12, Height: 12,
+		ZIndex: 1,
+	}).Color(ui.Color{RGBA: [4]float32{0.32, 0.62, 0.98, 1}}).Entity()
+	b.Pop()
+	return box, inner
 }
 
 func buildModeButton(b *ui.Builder, text string) ecs.Entity {

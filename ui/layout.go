@@ -202,8 +202,6 @@ func childrenAxis(world *ecs.World, children []ecs.Entity, rowAxis bool) (used, 
 	return
 }
 
-// intersectClip returns the overlap of two clip rects. A rect with
-// non-positive size means "no clip", so intersecting with it yields the other.
 func intersectClip(a, b Rect) Rect {
 	if a.Width <= 0 || a.Height <= 0 {
 		return b
