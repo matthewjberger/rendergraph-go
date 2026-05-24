@@ -357,6 +357,23 @@ func meshExecute(state *meshPassState, context *render.PassContext) error {
 		state.iblBindGroup = iblBindGroup
 	}
 
+	// The material registry buffer is reallocated when it grows past capacity.
+	// The global bind group (shared by the opaque, OIT, and skinned passes)
+	// references it directly, so rebuild it whenever the buffer changes or those
+	// passes would sample a freed buffer.
+	registry := ecs.MustResource[asset.MaterialRegistryResource](context.World).Registry
+	if registry.Buffer() != state.lastRegistryBuffer {
+		newGlobal, err := createGlobalBindGroup(context.Device, state.globalBgLayout, state.clusters, state.arrays, registry, state.shadow, state.shadow.UniformBuffer, state.spotShadow, state.pointShadow)
+		if err != nil {
+			return err
+		}
+		if state.globalBindGroup != nil {
+			state.globalBindGroup.Release()
+		}
+		state.globalBindGroup = newGlobal
+		state.lastRegistryBuffer = registry.Buffer()
+	}
+
 	if hasGeometry && meshRunPrepass && state.depthPrepass != nil {
 		prepassDepth := depthAttachment
 		prepass := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{

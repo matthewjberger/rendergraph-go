@@ -30,6 +30,12 @@ type meshPassState struct {
 	globalBindGroup *wgpu.BindGroup
 	iblBindGroup    *wgpu.BindGroup
 
+	arrays             *asset.MaterialTextureArrays
+	shadow             *Shadow
+	spotShadow         *SpotShadow
+	pointShadow        *PointShadow
+	lastRegistryBuffer *wgpu.Buffer
+
 	ibl                 *IBL
 	transmissionTexture *wgpu.Texture
 	transmissionView    *wgpu.TextureView
@@ -132,6 +138,11 @@ func NewMeshPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, aspect f
 		return nil, err
 	}
 	state.globalBindGroup = globalBindGroup
+	state.arrays = arrays
+	state.shadow = shadow
+	state.spotShadow = spotShadow
+	state.pointShadow = pointShadow
+	state.lastRegistryBuffer = registry.Buffer()
 
 	pipeline, err := createMeshPipeline(device, surfaceFormat, viewProjLayout, globalBgLayout, handleBgLayout, iblBgLayout)
 	if err != nil {
