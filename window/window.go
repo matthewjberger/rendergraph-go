@@ -10,6 +10,8 @@ type Timing struct {
 	UptimeSeconds float32
 	FramesPerSec  float32
 	FrameCounter  uint64
+
+	fpsElapsedSeconds float32
 }
 
 type Window struct {
@@ -17,11 +19,18 @@ type Window struct {
 	Timing   Timing
 }
 
+// Advance updates per-frame timing. FramesPerSec is sampled over a one-second
+// window — frames are counted until at least a second has elapsed, then the
+// count becomes the reported rate and the counter resets — so the value is
+// stable rather than the jittery instantaneous 1/delta.
 func Advance(timing *Timing, delta float32) {
 	timing.DeltaSeconds = delta
 	timing.UptimeSeconds += delta
 	timing.FrameCounter++
-	if delta > 0 {
-		timing.FramesPerSec = 1.0 / delta
+	timing.fpsElapsedSeconds += delta
+	if timing.fpsElapsedSeconds >= 1.0 {
+		timing.FramesPerSec = float32(timing.FrameCounter) / timing.fpsElapsedSeconds
+		timing.FrameCounter = 0
+		timing.fpsElapsedSeconds = 0
 	}
 }
