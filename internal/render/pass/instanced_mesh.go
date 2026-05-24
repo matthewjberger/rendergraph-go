@@ -44,15 +44,16 @@ type instancedRenderEntity struct {
 }
 
 type instancedMeshState struct {
-	pipeline       *wgpu.RenderPipeline
-	viewProjLayout *wgpu.BindGroupLayout
-	globalLayout   *wgpu.BindGroupLayout
-	handleLayout   *wgpu.BindGroupLayout
-	viewProjBuffer *wgpu.Buffer
-	viewProjGroup  *wgpu.BindGroup
-	uniformBuffer  *wgpu.Buffer
-	globalGroup    *wgpu.BindGroup
-	aspectFn       func() float32
+	pipeline        *wgpu.RenderPipeline
+	prepassPipeline *wgpu.RenderPipeline
+	viewProjLayout  *wgpu.BindGroupLayout
+	globalLayout    *wgpu.BindGroupLayout
+	handleLayout    *wgpu.BindGroupLayout
+	viewProjBuffer  *wgpu.Buffer
+	viewProjGroup   *wgpu.BindGroup
+	uniformBuffer   *wgpu.Buffer
+	globalGroup     *wgpu.BindGroup
+	aspectFn        func() float32
 
 	perEntity map[ecs.Entity]*instancedRenderEntity
 }
@@ -155,8 +156,8 @@ func newInstancedMeshState(device *wgpu.Device, aspect func() float32) (*instanc
 		Primitive: wgpu.PrimitiveState{Topology: wgpu.PrimitiveTopologyTriangleList, FrontFace: wgpu.FrontFaceCCW, CullMode: wgpu.CullModeBack},
 		DepthStencil: &wgpu.DepthStencilState{
 			Format:            render.DepthFormat,
-			DepthWriteEnabled: true,
-			DepthCompare:      wgpu.CompareFunctionGreater,
+			DepthWriteEnabled: false,
+			DepthCompare:      wgpu.CompareFunctionGreaterEqual,
 			StencilFront:      wgpu.StencilFaceState{Compare: wgpu.CompareFunctionAlways},
 			StencilBack:       wgpu.StencilFaceState{Compare: wgpu.CompareFunctionAlways},
 		},
@@ -176,6 +177,38 @@ func newInstancedMeshState(device *wgpu.Device, aspect func() float32) (*instanc
 		globalLayout.Release()
 		handleLayout.Release()
 		return nil, fmt.Errorf("instanced_mesh: pipeline: %w", err)
+	}
+
+	prepassPipeline, err := device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
+		Label:  "instanced_mesh depth prepass pipeline",
+		Layout: pipelineLayout,
+		Vertex: wgpu.VertexState{
+			Module:     module,
+			EntryPoint: "vs_prepass",
+			Buffers: []wgpu.VertexBufferLayout{{
+				ArrayStride: uint64(unsafe.Sizeof(asset.MeshVertex{})),
+				StepMode:    wgpu.VertexStepModeVertex,
+				Attributes: []wgpu.VertexAttribute{
+					{Format: wgpu.VertexFormatFloat32x4, Offset: 0, ShaderLocation: 0},
+				},
+			}},
+		},
+		Primitive: wgpu.PrimitiveState{Topology: wgpu.PrimitiveTopologyTriangleList, FrontFace: wgpu.FrontFaceCCW, CullMode: wgpu.CullModeBack},
+		DepthStencil: &wgpu.DepthStencilState{
+			Format:            render.DepthFormat,
+			DepthWriteEnabled: true,
+			DepthCompare:      wgpu.CompareFunctionGreater,
+			StencilFront:      wgpu.StencilFaceState{Compare: wgpu.CompareFunctionAlways},
+			StencilBack:       wgpu.StencilFaceState{Compare: wgpu.CompareFunctionAlways},
+		},
+		Multisample: wgpu.MultisampleState{Count: 1, Mask: 0xFFFFFFFF},
+	})
+	if err != nil {
+		pipeline.Release()
+		viewProjLayout.Release()
+		globalLayout.Release()
+		handleLayout.Release()
+		return nil, fmt.Errorf("instanced_mesh: depth prepass pipeline: %w", err)
 	}
 
 	viewProjBuffer, err := device.CreateBuffer(&wgpu.BufferDescriptor{
@@ -204,15 +237,16 @@ func newInstancedMeshState(device *wgpu.Device, aspect func() float32) (*instanc
 	}
 
 	return &instancedMeshState{
-		pipeline:       pipeline,
-		viewProjLayout: viewProjLayout,
-		globalLayout:   globalLayout,
-		handleLayout:   handleLayout,
-		viewProjBuffer: viewProjBuffer,
-		viewProjGroup:  viewProjGroup,
-		uniformBuffer:  uniformBuffer,
-		aspectFn:       aspect,
-		perEntity:      make(map[ecs.Entity]*instancedRenderEntity),
+		pipeline:        pipeline,
+		prepassPipeline: prepassPipeline,
+		viewProjLayout:  viewProjLayout,
+		globalLayout:    globalLayout,
+		handleLayout:    handleLayout,
+		viewProjBuffer:  viewProjBuffer,
+		viewProjGroup:   viewProjGroup,
+		uniformBuffer:   uniformBuffer,
+		aspectFn:        aspect,
+		perEntity:       make(map[ecs.Entity]*instancedRenderEntity),
 	}, nil
 }
 
@@ -333,6 +367,50 @@ func instancedMeshExecute(state *instancedMeshState, context *render.PassContext
 	}
 	depthAttachment.DepthLoadOp = wgpu.LoadOpLoad
 
+	prepassDepth, err := context.DepthAttachment("depth")
+	if err != nil {
+		return err
+	}
+	prepassDepth.DepthLoadOp = wgpu.LoadOpLoad
+	prepassDepth.DepthStoreOp = wgpu.StoreOpStore
+
+	mask := ecs.MustMaskOf[asset.InstancedMesh](context.World) |
+		ecs.MustMaskOf[transform.GlobalTransform](context.World)
+	drawInstances := func(enc *wgpu.RenderPassEncoder) {
+		context.World.ForEach(mask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {
+			inst, _ := ecs.Get[asset.InstancedMesh](context.World, entity)
+			if inst == nil {
+				return
+			}
+			es := state.perEntity[entity]
+			if es == nil || es.bindGroup == nil {
+				return
+			}
+			count := compute.InstanceCount(entity)
+			if count == 0 {
+				return
+			}
+			entry, ok := assets.Lookup(inst.Mesh)
+			if !ok {
+				return
+			}
+			enc.SetBindGroup(2, es.bindGroup, nil)
+			enc.SetVertexBuffer(0, entry.Vertices, 0, wgpu.WholeSize)
+			enc.Draw(entry.VertexCount, count, 0, 0)
+		})
+	}
+
+	prepass := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
+		Label:                  "instanced_mesh depth prepass",
+		DepthStencilAttachment: &prepassDepth,
+	})
+	prepass.SetPipeline(state.prepassPipeline)
+	prepass.SetBindGroup(0, state.viewProjGroup, nil)
+	prepass.SetBindGroup(1, state.globalGroup, nil)
+	drawInstances(prepass)
+	prepass.End()
+	prepass.Release()
+
 	passEnc := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		Label:                  "instanced_mesh",
 		ColorAttachments:       []wgpu.RenderPassColorAttachment{colorAttachment, entityIdAttachment, viewNormalsAttachment},
@@ -341,30 +419,7 @@ func instancedMeshExecute(state *instancedMeshState, context *render.PassContext
 	passEnc.SetPipeline(state.pipeline)
 	passEnc.SetBindGroup(0, state.viewProjGroup, nil)
 	passEnc.SetBindGroup(1, state.globalGroup, nil)
-
-	mask := ecs.MustMaskOf[asset.InstancedMesh](context.World) |
-		ecs.MustMaskOf[transform.GlobalTransform](context.World)
-	context.World.ForEach(mask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {
-		inst, _ := ecs.Get[asset.InstancedMesh](context.World, entity)
-		if inst == nil {
-			return
-		}
-		es := state.perEntity[entity]
-		if es == nil || es.bindGroup == nil {
-			return
-		}
-		count := compute.InstanceCount(entity)
-		if count == 0 {
-			return
-		}
-		entry, ok := assets.Lookup(inst.Mesh)
-		if !ok {
-			return
-		}
-		passEnc.SetBindGroup(2, es.bindGroup, nil)
-		passEnc.SetVertexBuffer(0, entry.Vertices, 0, wgpu.WholeSize)
-		passEnc.Draw(entry.VertexCount, count, 0, 0)
-	})
+	drawInstances(passEnc)
 	passEnc.End()
 	passEnc.Release()
 	return nil
@@ -391,6 +446,9 @@ func instancedMeshRelease(state *instancedMeshState) {
 	}
 	if state.viewProjBuffer != nil {
 		state.viewProjBuffer.Release()
+	}
+	if state.prepassPipeline != nil {
+		state.prepassPipeline.Release()
 	}
 	if state.pipeline != nil {
 		state.pipeline.Release()

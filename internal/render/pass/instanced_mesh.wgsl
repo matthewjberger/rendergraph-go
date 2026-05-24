@@ -60,6 +60,13 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32)
     return out;
 }
 
+@vertex
+fn vs_prepass(@location(0) position: vec4<f32>, @builtin(instance_index) instance_index: u32) -> @builtin(position) vec4<f32> {
+    let model = world_matrices[instance_index];
+    let world_position = model * vec4<f32>(position.xyz, 1.0);
+    return view_proj_uniform.view_proj * world_position;
+}
+
 @fragment
 fn fragment_main(in: VertexOutput) -> FragmentOutput {
     let albedo = per_entity.base_color.rgb * in.color.rgb;
