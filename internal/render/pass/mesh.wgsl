@@ -17,6 +17,7 @@ struct VertexOutput {
     @location(5) @interpolate(flat) entity_id: u32,
     @location(6) @interpolate(flat) material_index: u32,
     @location(7) view_normal: vec3<f32>,
+    @location(8) @interpolate(flat) world_scale_factor: f32,
 };
 
 struct Light {
@@ -413,8 +414,9 @@ fn get_ibl_volume_refraction(
     thickness: f32,
     attenuation_color: vec3<f32>,
     attenuation_distance: f32,
+    model_scale: vec3<f32>,
 ) -> vec3<f32> {
-    let transmission_distance = thickness;
+    let transmission_distance = thickness * length(model_scale);
     var transmitted_light: vec3<f32>;
     if (dispersion > 0.0) {
         let half_spread = (ior - 1.0) * 0.025 * dispersion;
@@ -795,6 +797,7 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32)
     out.material_index = material_indices[slot];
     let view_mat3 = mat3x3<f32>(view_matrix[0].xyz, view_matrix[1].xyz, view_matrix[2].xyz);
     out.view_normal = view_mat3 * out.world_normal;
+    out.world_scale_factor = (length(model[0].xyz) + length(model[1].xyz) + length(model[2].xyz)) / 3.0;
     return out;
 }
 
@@ -1080,6 +1083,7 @@ fn fragment_main(in: VertexOutput) -> FragmentOutput {
         let transmission = get_ibl_volume_refraction(
             n, v, in.world_pos, roughness, albedo, f0, mat.ior, mat.dispersion,
             mat.thickness, mat.attenuation_color, mat.attenuation_distance,
+            vec3<f32>(in.world_scale_factor),
         );
         let transmission_attenuated = transmission * (vec3<f32>(1.0) - fss_ess);
         diffuse_ibl = mix(diffuse_ibl, transmission_attenuated, trans);

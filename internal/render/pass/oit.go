@@ -39,7 +39,10 @@ type oitMeshPassState struct {
 	pipeline        *wgpu.RenderPipeline
 	prepassPipeline *wgpu.RenderPipeline
 	globalLayout    *wgpu.BindGroupLayout
+	iblLayout       *wgpu.BindGroupLayout
 	globalGroup     *wgpu.BindGroup
+	iblGroup        *wgpu.BindGroup
+	lastTransView   *wgpu.TextureView
 	viewProjBuffer  *wgpu.Buffer
 	directionalBuf  *wgpu.Buffer
 	aspectFn        func() float32
@@ -101,11 +104,27 @@ func newOitMeshState(device *wgpu.Device, aspect func() float32) (*oitMeshPassSt
 	}
 	defer handleLayout.Release()
 
-	pipelineLayout, err := device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
-		Label:            "oit_mesh pipeline layout",
-		BindGroupLayouts: []*wgpu.BindGroupLayout{globalLayout, handleLayout},
+	iblLayout, err := device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+		Label: "oit_mesh ibl layout",
+		Entries: []wgpu.BindGroupLayoutEntry{
+			{Binding: 0, Visibility: wgpu.ShaderStageFragment, Texture: wgpu.TextureBindingLayout{SampleType: wgpu.TextureSampleTypeFloat, ViewDimension: wgpu.TextureViewDimensionCube}},
+			{Binding: 1, Visibility: wgpu.ShaderStageFragment, Texture: wgpu.TextureBindingLayout{SampleType: wgpu.TextureSampleTypeFloat, ViewDimension: wgpu.TextureViewDimension2D}},
+			{Binding: 2, Visibility: wgpu.ShaderStageFragment, Sampler: wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering}},
+			{Binding: 3, Visibility: wgpu.ShaderStageFragment, Texture: wgpu.TextureBindingLayout{SampleType: wgpu.TextureSampleTypeFloat, ViewDimension: wgpu.TextureViewDimension2D}},
+			{Binding: 4, Visibility: wgpu.ShaderStageFragment, Sampler: wgpu.SamplerBindingLayout{Type: wgpu.SamplerBindingTypeFiltering}},
+		},
 	})
 	if err != nil {
+		globalLayout.Release()
+		return nil, fmt.Errorf("oit_mesh: ibl layout: %w", err)
+	}
+
+	pipelineLayout, err := device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
+		Label:            "oit_mesh pipeline layout",
+		BindGroupLayouts: []*wgpu.BindGroupLayout{globalLayout, handleLayout, iblLayout},
+	})
+	if err != nil {
+		iblLayout.Release()
 		globalLayout.Release()
 		return nil, fmt.Errorf("oit_mesh: pipeline layout: %w", err)
 	}
@@ -174,6 +193,7 @@ func newOitMeshState(device *wgpu.Device, aspect func() float32) (*oitMeshPassSt
 		},
 	})
 	if err != nil {
+		iblLayout.Release()
 		globalLayout.Release()
 		return nil, fmt.Errorf("oit_mesh: pipeline: %w", err)
 	}
@@ -216,6 +236,7 @@ func newOitMeshState(device *wgpu.Device, aspect func() float32) (*oitMeshPassSt
 	})
 	if err != nil {
 		pipeline.Release()
+		iblLayout.Release()
 		globalLayout.Release()
 		return nil, fmt.Errorf("oit_mesh: blend-opaque prepass pipeline: %w", err)
 	}
@@ -228,6 +249,7 @@ func newOitMeshState(device *wgpu.Device, aspect func() float32) (*oitMeshPassSt
 	if err != nil {
 		prepassPipeline.Release()
 		pipeline.Release()
+		iblLayout.Release()
 		globalLayout.Release()
 		return nil, fmt.Errorf("oit_mesh: view_proj buffer: %w", err)
 	}
@@ -240,6 +262,7 @@ func newOitMeshState(device *wgpu.Device, aspect func() float32) (*oitMeshPassSt
 		viewProjBuffer.Release()
 		prepassPipeline.Release()
 		pipeline.Release()
+		iblLayout.Release()
 		globalLayout.Release()
 		return nil, fmt.Errorf("oit_mesh: directional buffer: %w", err)
 	}
@@ -248,6 +271,7 @@ func newOitMeshState(device *wgpu.Device, aspect func() float32) (*oitMeshPassSt
 		pipeline:        pipeline,
 		prepassPipeline: prepassPipeline,
 		globalLayout:    globalLayout,
+		iblLayout:       iblLayout,
 		viewProjBuffer:  viewProjBuffer,
 		directionalBuf:  directionalBuf,
 		aspectFn:        aspect,
@@ -335,8 +359,33 @@ func oitMeshPrepare(state *oitMeshPassState, context *render.PassContext) error 
 
 func oitMeshExecute(state *oitMeshPassState, context *render.PassContext) error {
 	meshState, ok := findMeshPassState(context.World)
-	if !ok || len(meshState.sortedHandles) == 0 {
+	if !ok {
 		return nil
+	}
+	hasGeometry := len(meshState.sortedHandles) > 0 && meshState.ibl != nil && meshState.transmissionView != nil
+	if hasGeometry && (state.iblGroup == nil || state.lastTransView != meshState.transmissionView) {
+		if state.iblGroup != nil {
+			state.iblGroup.Release()
+		}
+		bg, err := context.Device.CreateBindGroup(&wgpu.BindGroupDescriptor{
+			Label:  "oit_mesh ibl bg",
+			Layout: state.iblLayout,
+			Entries: []wgpu.BindGroupEntry{
+				{Binding: 0, TextureView: meshState.ibl.PrefilteredView},
+				{Binding: 1, TextureView: meshState.ibl.BrdfLutView},
+				{Binding: 2, Sampler: meshState.ibl.Sampler},
+				{Binding: 3, TextureView: meshState.transmissionView},
+				{Binding: 4, Sampler: meshState.transmissionSampler},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("oit_mesh: ibl bg: %w", err)
+		}
+		state.iblGroup = bg
+		state.lastTransView = meshState.transmissionView
+	}
+	if state.iblGroup == nil {
+		hasGeometry = false
 	}
 	assets := ecs.MustResource[asset.MeshAssetsResource](context.World).Assets
 
@@ -362,56 +411,62 @@ func oitMeshExecute(state *oitMeshPassState, context *render.PassContext) error 
 	depth.StencilLoadOp = wgpu.LoadOpLoad
 	depth.StencilStoreOp = wgpu.StoreOpStore
 
-	prepassDepth, err := context.DepthAttachment("depth")
-	if err != nil {
-		return err
-	}
-	prepassDepth.DepthLoadOp = wgpu.LoadOpLoad
-	prepassDepth.DepthStoreOp = wgpu.StoreOpStore
-	prepassDepth.StencilLoadOp = wgpu.LoadOpLoad
-	prepassDepth.StencilStoreOp = wgpu.StoreOpStore
+	if hasGeometry {
+		prepassDepth, err := context.DepthAttachment("depth")
+		if err != nil {
+			return err
+		}
+		prepassDepth.DepthLoadOp = wgpu.LoadOpLoad
+		prepassDepth.DepthStoreOp = wgpu.StoreOpStore
+		prepassDepth.StencilLoadOp = wgpu.LoadOpLoad
+		prepassDepth.StencilStoreOp = wgpu.StoreOpStore
 
-	prepass := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
-		Label:                  "oit_mesh blend-opaque prepass",
-		DepthStencilAttachment: &prepassDepth,
-	})
-	prepass.SetPipeline(state.prepassPipeline)
-	prepass.SetBindGroup(0, state.globalGroup, nil)
-	for _, handle := range meshState.sortedHandles {
-		bucket := meshState.perHandle[handle]
-		if bucket == nil || bucket.bindGroup == nil {
-			continue
+		prepass := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
+			Label:                  "oit_mesh blend-opaque prepass",
+			DepthStencilAttachment: &prepassDepth,
+		})
+		prepass.SetPipeline(state.prepassPipeline)
+		prepass.SetBindGroup(0, state.globalGroup, nil)
+		prepass.SetBindGroup(2, state.iblGroup, nil)
+		for _, handle := range meshState.sortedHandles {
+			bucket := meshState.perHandle[handle]
+			if bucket == nil || bucket.bindGroup == nil {
+				continue
+			}
+			entry, ok := assets.Lookup(handle)
+			if !ok {
+				continue
+			}
+			prepass.SetBindGroup(1, bucket.bindGroup, nil)
+			prepass.SetVertexBuffer(0, entry.Vertices, 0, wgpu.WholeSize)
+			prepass.Draw(entry.VertexCount, uint32(len(bucket.slotEntity)), 0, 0)
 		}
-		entry, ok := assets.Lookup(handle)
-		if !ok {
-			continue
-		}
-		prepass.SetBindGroup(1, bucket.bindGroup, nil)
-		prepass.SetVertexBuffer(0, entry.Vertices, 0, wgpu.WholeSize)
-		prepass.Draw(entry.VertexCount, uint32(len(bucket.slotEntity)), 0, 0)
+		prepass.End()
+		prepass.Release()
 	}
-	prepass.End()
-	prepass.Release()
 
 	passEnc := context.Encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		Label:                  "oit_mesh",
 		ColorAttachments:       []wgpu.RenderPassColorAttachment{accum, reveal, entityID},
 		DepthStencilAttachment: &depth,
 	})
-	passEnc.SetPipeline(state.pipeline)
-	passEnc.SetBindGroup(0, state.globalGroup, nil)
-	for _, handle := range meshState.sortedHandles {
-		bucket := meshState.perHandle[handle]
-		if bucket == nil || bucket.bindGroup == nil {
-			continue
+	if hasGeometry {
+		passEnc.SetPipeline(state.pipeline)
+		passEnc.SetBindGroup(0, state.globalGroup, nil)
+		passEnc.SetBindGroup(2, state.iblGroup, nil)
+		for _, handle := range meshState.sortedHandles {
+			bucket := meshState.perHandle[handle]
+			if bucket == nil || bucket.bindGroup == nil {
+				continue
+			}
+			entry, ok := assets.Lookup(handle)
+			if !ok {
+				continue
+			}
+			passEnc.SetBindGroup(1, bucket.bindGroup, nil)
+			passEnc.SetVertexBuffer(0, entry.Vertices, 0, wgpu.WholeSize)
+			passEnc.Draw(entry.VertexCount, uint32(len(bucket.slotEntity)), 0, 0)
 		}
-		entry, ok := assets.Lookup(handle)
-		if !ok {
-			continue
-		}
-		passEnc.SetBindGroup(1, bucket.bindGroup, nil)
-		passEnc.SetVertexBuffer(0, entry.Vertices, 0, wgpu.WholeSize)
-		passEnc.Draw(entry.VertexCount, uint32(len(bucket.slotEntity)), 0, 0)
 	}
 	passEnc.End()
 	passEnc.Release()
@@ -423,11 +478,19 @@ func oitMeshInvalidate(state *oitMeshPassState) {
 		state.globalGroup.Release()
 		state.globalGroup = nil
 	}
+	if state.iblGroup != nil {
+		state.iblGroup.Release()
+		state.iblGroup = nil
+	}
+	state.lastTransView = nil
 }
 
 func oitMeshRelease(state *oitMeshPassState) {
 	if state.globalGroup != nil {
 		state.globalGroup.Release()
+	}
+	if state.iblGroup != nil {
+		state.iblGroup.Release()
 	}
 	if state.directionalBuf != nil {
 		state.directionalBuf.Release()
@@ -443,6 +506,9 @@ func oitMeshRelease(state *oitMeshPassState) {
 	}
 	if state.globalLayout != nil {
 		state.globalLayout.Release()
+	}
+	if state.iblLayout != nil {
+		state.iblLayout.Release()
 	}
 }
 
