@@ -15,13 +15,13 @@ build $project="editor":
 # Builds the editor wasm bundle into site/ (Windows).
 [windows]
 build-wasm:
-    $env:GOOS = "js"; $env:GOARCH = "wasm"; go build -o site/main.wasm ./cmd/editor
+    $env:GOOS = "js"; $env:GOARCH = "wasm"; go build -ldflags="-s -w" -trimpath -o site/main.wasm ./cmd/editor
     Copy-Item "$((go env GOROOT))/lib/wasm/wasm_exec.js" site/wasm_exec.js
 
 # Builds the editor wasm bundle into site/ (Unix).
 [unix]
 build-wasm:
-    GOOS=js GOARCH=wasm go build -o site/main.wasm ./cmd/editor
+    GOOS=js GOARCH=wasm go build -ldflags="-s -w" -trimpath -o site/main.wasm ./cmd/editor
     cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/wasm_exec.js
 
 # Serves site/ on http://localhost:8080
