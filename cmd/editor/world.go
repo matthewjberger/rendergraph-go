@@ -12,16 +12,23 @@ import (
 	"github.com/matthewjberger/indigo/window"
 )
 
+// viewerKeyLight marks an entity as part of the viewer's own lighting rig so it
+// survives scene clears. Without it, loading a model in viewer mode despawns the
+// sun, leaving only IBL — which renders fully-rough dielectric models near-black.
+type viewerKeyLight struct{}
+
 func initializeWorldEntities(worlds app.Worlds, meshes []asset.MeshHandle, meshNames []string, orbMesh asset.MeshHandle) {
 	const (
 		gridExtent  = 3
 		gridSpacing = 1.5
 	)
 
+	ecs.Register[viewerKeyLight](worlds.Engine)
 	lightMask := ecs.MustMaskOf[transform.LocalTransform](worlds.Engine) |
 		ecs.MustMaskOf[transform.GlobalTransform](worlds.Engine) |
 		ecs.MustMaskOf[transform.LocalTransformDirty](worlds.Engine) |
 		ecs.MustMaskOf[render.Light](worlds.Engine) |
+		ecs.MustMaskOf[viewerKeyLight](worlds.Engine) |
 		ecs.MustMaskOf[app.Name](worlds.Engine)
 
 	sun := worlds.Engine.Spawn(lightMask)

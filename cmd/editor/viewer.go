@@ -30,8 +30,12 @@ func collectSubtree(engine *ecs.World, entity ecs.Entity, out []ecs.Entity) []ec
 
 func clearLoadedScenes(engine *ecs.World) {
 	transformMask := ecs.MustMaskOf[transform.GlobalTransform](engine)
+	keepMask := ecs.MustMaskOf[viewerKeyLight](engine)
 	var doomed []ecs.Entity
 	engine.ForEach(transformMask, 0, func(entity ecs.Entity, _ *ecs.Archetype, _ int) {
+		if engine.HasComponents(entity, keepMask) {
+			return
+		}
 		doomed = append(doomed, entity)
 	})
 	if len(doomed) == 0 {
