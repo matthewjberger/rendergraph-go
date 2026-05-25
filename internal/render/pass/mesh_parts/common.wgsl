@@ -73,7 +73,7 @@ struct Material {
     ior:              f32,
 
     emissive_strength: f32,
-    _pad1a:            f32,
+    double_sided:      u32,
     _pad1b:            f32,
     _pad1c:            f32,
 

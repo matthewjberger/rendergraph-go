@@ -36,7 +36,7 @@ struct Material {
     unlit:                    u32,
     ior:                      f32,
     emissive_strength:        f32,
-    _pad1a:                   f32,
+    double_sided:             u32,
     _pad1b:                   f32,
     _pad1c:                   f32,
 
@@ -188,8 +188,11 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32,
 }
 
 @fragment
-fn fragment_main(in: VertexOutput) {
+fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) {
     let mat = materials[in.material_index];
+    if (mat.double_sided == 0u && !front_facing) {
+        discard;
+    }
     if (mat.alpha_mode == 2u || mat.transmission_factor > 0.0) {
         discard;
     }

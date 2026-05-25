@@ -237,7 +237,7 @@ type MaterialGPU struct {
 	IOR             float32
 
 	EmissiveStrength float32
-	Pad1a            float32
+	DoubleSided      uint32
 	Pad1b            float32
 	Pad1c            float32
 
@@ -327,6 +327,10 @@ func (m Material) ToGPU() MaterialGPU {
 	if m.Unlit {
 		unlit = 1
 	}
+	var doubleSided uint32
+	if m.DoubleSided {
+		doubleSided = 1
+	}
 	ior := m.IOR
 	if ior <= 0 {
 		ior = 1.5
@@ -380,6 +384,7 @@ func (m Material) ToGPU() MaterialGPU {
 		Unlit:                  unlit,
 		IOR:                    ior,
 		EmissiveStrength:       emissiveStrength,
+		DoubleSided:            doubleSided,
 
 		NormalMapFlags:      m.NormalMapFlags,
 		SpecularFactor:      m.SpecularFactor,
