@@ -105,6 +105,22 @@ func (c *HudContext) refreshFps() {
 	c.setText(c.Hud.FpsLabel, fmt.Sprintf("%.0f FPS", fps))
 }
 
+func (c *HudContext) refreshLoadingProgress() {
+	queue := ecs.MustResource[asset.LoadingQueueResource](c.Engine).Queue
+	active := queue.Active()
+	ui.SetVisible(c.UI, c.Hud.LoadingBar, active)
+	if !active {
+		return
+	}
+	completed, total := queue.Progress()
+	width := hudLoadingBarWidth * queue.Fraction()
+	if node, ok := ecs.GetMut[ui.Node](c.UI, c.Hud.LoadingFill); ok && node.Width != width {
+		node.Width = width
+		ui.MarkLayoutDirty(c.UI)
+	}
+	c.setText(c.Hud.LoadingLabel, fmt.Sprintf("Loading textures  %d / %d", completed, total))
+}
+
 func (c *HudContext) refreshModeButtons() {
 	setModeColor(c.UI, c.Hud.TranslateButton, c.Gizmo.Mode == render.GizmoTranslate)
 	setModeColor(c.UI, c.Hud.RotateButton, c.Gizmo.Mode == render.GizmoRotate)

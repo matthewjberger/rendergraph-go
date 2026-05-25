@@ -25,6 +25,7 @@ func updateEditorFrame(worlds app.Worlds, renderer *render.Renderer, demo *app.A
 	driveTextInputs(worlds)
 	handleUiClicks(worlds)
 	ctx.refreshFps()
+	ctx.refreshLoadingProgress()
 	ctx.refreshModeButtons()
 	ctx.refreshViewerCheckbox()
 	ctx.refreshMenuPopups()

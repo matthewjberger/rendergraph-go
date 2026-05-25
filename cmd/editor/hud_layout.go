@@ -14,6 +14,9 @@ const (
 	hudMenuPopupWidth  float32 = 150
 	hudMenuItemHeight  float32 = 22
 
+	hudLoadingBarWidth  float32 = 320
+	hudLoadingBarHeight float32 = 24
+
 	menuClosed      = 0
 	menuFileOpen    = 1
 	menuEditOpen    = 2
@@ -79,6 +82,10 @@ type HudHandles struct {
 
 	FramePending bool
 	ModelRoots   []ecs.Entity
+
+	LoadingBar   ecs.Entity
+	LoadingFill  ecs.Entity
+	LoadingLabel ecs.Entity
 
 	TreeScrollPixels float32
 	TreeScrollIndex  int
@@ -220,6 +227,30 @@ func buildHud(world *ecs.World) HudHandles {
 		[]string{"DELETE"})
 
 	h.Khronos = buildKhronosPanel(b)
+
+	h.LoadingBar = b.Node(ui.Node{
+		X: 0, Y: 40,
+		Width: hudLoadingBarWidth, Height: hudLoadingBarHeight,
+		Anchor: ui.AnchorBottomCenter,
+		ZIndex: 200,
+		Hidden: true,
+	}).Color(ui.Color{RGBA: [4]float32{0.08, 0.09, 0.12, 0.92}}).Entity()
+	b.Push(h.LoadingBar)
+	h.LoadingFill = b.Node(ui.Node{
+		X: 0, Y: 0,
+		Width: hudLoadingBarWidth, Height: hudLoadingBarHeight,
+		ZIndex: 201,
+	}).Color(ui.Color{RGBA: [4]float32{0.32, 0.62, 0.98, 1}}).Entity()
+	h.LoadingLabel = b.Node(ui.Node{
+		X: 8, Y: 5,
+		Width: hudLoadingBarWidth - 16, Height: hudLoadingBarHeight,
+		ZIndex: 202,
+	}).Color(ui.Color{RGBA: [4]float32{0, 0, 0, 0}}).Text(ui.Text{
+		Content: "",
+		Color:   [4]float32{0.95, 0.97, 1, 1},
+		Scale:   1.4,
+	}).Entity()
+	b.Pop()
 
 	return h
 }
