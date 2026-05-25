@@ -95,6 +95,9 @@
   if (!navigator.gpu) {
     showStatus('WebGPU is not available in this browser. Try the latest Chrome, Edge, or Safari 26+.');
     hideLoading();
+  } else if (typeof Go === 'undefined') {
+    showStatus('Failed to load the wasm runtime (wasm_exec.js). Check the deploy paths.');
+    hideLoading();
   } else {
     const go = new Go();
     WebAssembly.instantiateStreaming(fetch('main.wasm'), go.importObject)

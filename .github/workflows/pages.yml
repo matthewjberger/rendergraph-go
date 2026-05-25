@@ -18,14 +18,13 @@ jobs:
         with:
           go-version: stable
 
-      - name: Build wasm bundles
+      - name: Build wasm bundle
         env:
           GOOS: js
           GOARCH: wasm
         run: |
-          mkdir -p site/editor
-          go build -o site/editor/main.wasm ./cmd/editor
-          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/editor/wasm_exec.js
+          go build -ldflags="-s -w" -trimpath -o site/main.wasm ./cmd/editor
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/wasm_exec.js
 
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@v4
