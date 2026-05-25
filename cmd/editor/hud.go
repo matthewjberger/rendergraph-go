@@ -118,7 +118,11 @@ func (c *HudContext) refreshLoadingProgress() {
 		node.Width = width
 		ui.MarkLayoutDirty(c.UI)
 	}
-	c.setText(c.Hud.LoadingLabel, fmt.Sprintf("Loading textures  %d / %d", completed, total))
+	label := queue.Label()
+	if label == "" {
+		label = "Loading textures"
+	}
+	c.setText(c.Hud.LoadingLabel, fmt.Sprintf("%s  %d / %d", label, completed, total))
 }
 
 func (c *HudContext) refreshModeButtons() {

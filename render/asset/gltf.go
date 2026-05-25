@@ -853,12 +853,17 @@ func uploadTextures(queue *wgpu.Queue, arrays *MaterialTextureArrays, label stri
 	for i := range out {
 		out[i] = NoTextureLayer
 	}
+	if arrays.loading != nil {
+		arrays.loading.SetLabel(label)
+	}
 	for i, tex := range doc.Textures {
 		if tex.Source == nil {
 			continue
 		}
 		img := doc.Images[*tex.Source]
-		name := fmt.Sprintf("%s/tex_%d", label, i)
+		// Key by source image (not texture index) so multiple textures that
+		// reference the same image share one reserved layer and decode once.
+		name := fmt.Sprintf("%s/img_%d", label, *tex.Source)
 		if img.Name != "" {
 			name = label + "/" + img.Name
 		}

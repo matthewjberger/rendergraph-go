@@ -17,6 +17,7 @@ type LoadingQueue struct {
 	generation uint64
 	total      int
 	completed  int
+	label      string
 }
 
 type LoadingQueueResource struct {
@@ -44,6 +45,17 @@ func NewLoadingQueue(arrays *MaterialTextureArrays) *LoadingQueue {
 	queue := &LoadingQueue{arrays: arrays, decoder: newTextureDecoder()}
 	arrays.loading = queue
 	return queue
+}
+
+// SetLabel records the name of the asset currently streaming, surfaced by the
+// progress UI.
+func (q *LoadingQueue) SetLabel(label string) {
+	q.label = label
+}
+
+// Label returns the name of the asset currently streaming.
+func (q *LoadingQueue) Label() string {
+	return q.label
 }
 
 // enqueue submits the encoded bytes of an already-reserved layer for streamed
