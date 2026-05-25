@@ -16,9 +16,9 @@ import (
 var autoExposureShader string
 
 // autoExposureBuffer keeps the CPU-written fields (AdaptationRate, DeltaTime)
-// first so they can be uploaded with a single offset-0 WriteBuffer. The browser
-// WebGPU binding rejects writes at a non-zero buffer offset, and the remaining
-// fields are maintained by the compute shader, so the CPU must not touch them.
+// first so the per-frame param update is a single contiguous write. The
+// remaining fields are maintained by the compute shader across frames, so the
+// CPU must not overwrite them.
 type autoExposureBuffer struct {
 	AdaptationRate      float32
 	DeltaTime           float32
@@ -153,9 +153,12 @@ func autoExposurePrepare(state *autoExposurePassState, context *render.PassConte
 	}
 
 	// AdaptationRate and DeltaTime are the first two fields, so this single
-	// offset-0 write updates exactly the CPU-controlled params while leaving the
-	// shader-maintained luminance fields intact.
-	context.Queue.WriteBuffer(state.buffer, 0, bytesOfN(&header, 8))
+	// write updates exactly the CPU-controlled params while leaving the
+	// shader-maintained luminance fields intact. Go through the staging helper
+	// rather than queue.WriteBuffer: on wasm the latter builds a view over the
+	// Go heap, which is invalidated once the heap grows (e.g. texture streaming),
+	// crashing with "Number of bytes to write is too large".
+	writeBuffer(context.Device, context.Queue, context.Encoder, state.buffer, 0, bytesOfN(&header, 8))
 
 	sceneView, err := context.TextureView("scene_color")
 	if err != nil {
