@@ -27,7 +27,7 @@ struct SkinnedInstance {
     morph_target_count:        u32,
     morph_displacement_offset: u32,
     morph_vertex_count:        u32,
-    morph_pad:                 u32,
+    flip_winding:              u32,
 };
 @group(2) @binding(0) var<storage, read> joint_matrices: array<mat4x4<f32>>;
 @group(2) @binding(1) var<storage, read> instances:      array<SkinnedInstance>;
@@ -83,9 +83,9 @@ fn vertex_main(input: VertexInput, @builtin(instance_index) instance_index: u32,
     let view_mat3 = mat3x3<f32>(view_matrix[0].xyz, view_matrix[1].xyz, view_matrix[2].xyz);
     out.view_normal = view_mat3 * skinned_normal;
     out.world_scale_factor = inst.world_scale_factor;
-    // Skinning bakes the transform into the joint matrices (no single model
-    // matrix), so winding can't be derived here; skinned meshes are virtually
-    // never mirror-scaled, so treat them as non-flipped.
-    out.flip_winding = 0u;
+    // flip_winding is computed on the CPU from the entity's world transform
+    // determinant (skinning bakes the transform into joint matrices, so it
+    // can't be derived here), matching nightshade's per-object approach.
+    out.flip_winding = inst.flip_winding;
     return out;
 }

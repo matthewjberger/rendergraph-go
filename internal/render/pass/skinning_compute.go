@@ -48,7 +48,7 @@ type SkinnedInstance struct {
 	MorphTargetCount        uint32
 	MorphDisplacementOffset uint32
 	MorphVertexCount        uint32
-	MorphPad                uint32
+	FlipWinding             uint32
 }
 
 const skinnedInstanceSize = uintptr(128)
@@ -422,10 +422,15 @@ func (sc *SkinningCompute) buildInstances(world *ecs.World, queue *wgpu.Queue) {
 		}
 		if global, ok := ecs.Get[transform.GlobalTransform](world, entity); ok && global != nil {
 			matrix := global.Matrix
-			scaleX := mgl32.Vec3{matrix[0], matrix[1], matrix[2]}.Len()
-			scaleY := mgl32.Vec3{matrix[4], matrix[5], matrix[6]}.Len()
-			scaleZ := mgl32.Vec3{matrix[8], matrix[9], matrix[10]}.Len()
-			instance.WorldScaleFactor = (scaleX + scaleY + scaleZ) / 3.0
+			c0 := mgl32.Vec3{matrix[0], matrix[1], matrix[2]}
+			c1 := mgl32.Vec3{matrix[4], matrix[5], matrix[6]}
+			c2 := mgl32.Vec3{matrix[8], matrix[9], matrix[10]}
+			instance.WorldScaleFactor = (c0.Len() + c1.Len() + c2.Len()) / 3.0
+			// Mirrored (negative-determinant) transforms flip triangle winding;
+			// the camera shader uses this to keep single-sided culling correct.
+			if c0.Cross(c1).Dot(c2) < 0 {
+				instance.FlipWinding = 1
+			}
 		}
 		if skinnedAssets != nil {
 			offset, targetCount := skinnedAssets.MorphInfo(sm.Mesh)

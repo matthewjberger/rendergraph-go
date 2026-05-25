@@ -31,13 +31,10 @@ struct VertexInput {
     @location(0) position: vec4<f32>,
 };
 
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) @interpolate(flat) flip_winding: u32,
-};
-
+// Vertex-only depth pass; back faces are culled by the pipeline (cull_mode
+// Back), matching nightshade's shadow_depth.wgsl.
 @vertex
-fn vertex_main(input: VertexInput) -> VertexOutput {
+fn vertex_main(input: VertexInput) -> @builtin(position) vec4<f32> {
     var local_position = input.position.xyz;
     var morph = morph_instances[input.instance_index];
     if (morph.target_count > 0u) {
@@ -48,22 +45,6 @@ fn vertex_main(input: VertexInput) -> VertexOutput {
             }
         }
     }
-    let model = models[input.instance_index];
-    let world_pos = model * vec4<f32>(local_position, 1.0);
-    var out: VertexOutput;
-    out.clip_position = uniforms.light_view_proj * world_pos;
-    let model_det = dot(model[0].xyz, cross(model[1].xyz, model[2].xyz));
-    out.flip_winding = select(0u, 1u, model_det < 0.0);
-    return out;
-}
-
-// Cull back-from-light faces (accounting for mirrored instances) so the shadow
-// map matches the camera-view single-sided culling. The pipeline uses CullNone
-// because hardware culling can't flip per mirrored instance.
-@fragment
-fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) {
-    let geometric_front = front_facing != (in.flip_winding != 0u);
-    if (!geometric_front) {
-        discard;
-    }
+    let world_pos = models[input.instance_index] * vec4<f32>(local_position, 1.0);
+    return uniforms.light_view_proj * world_pos;
 }

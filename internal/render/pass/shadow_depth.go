@@ -310,14 +310,10 @@ func NewShadowDepthPass(device *wgpu.Device, shadow *Shadow) (*render.Pass, erro
 				},
 			}},
 		},
-		Fragment: &wgpu.FragmentState{
-			Module:     shader,
-			EntryPoint: "fragment_main",
-		},
 		Primitive: wgpu.PrimitiveState{
 			Topology:  wgpu.PrimitiveTopologyTriangleList,
 			FrontFace: wgpu.FrontFaceCCW,
-			CullMode:  wgpu.CullModeNone,
+			CullMode:  wgpu.CullModeBack,
 		},
 		DepthStencil: &wgpu.DepthStencilState{
 			Format:            ShadowMapFormat,
