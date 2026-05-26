@@ -226,12 +226,12 @@ func computeMatrix(world *ecs.World, entity ecs.Entity, depth int) Mat4 {
 	}
 	parentMatrix := parentGlobal.Matrix
 	if ecs.Has[IgnoreParentScale](world, entity) {
-		parentMatrix = stripScale(parentMatrix)
+		parentMatrix = StripScale(parentMatrix)
 	}
 	return parentMatrix.Mul4(localMatrix)
 }
 
-func stripScale(m Mat4) Mat4 {
+func StripScale(m Mat4) Mat4 {
 	out := m
 	col0 := Vec3{out[0], out[1], out[2]}
 	col1 := Vec3{out[4], out[5], out[6]}

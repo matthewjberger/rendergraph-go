@@ -156,11 +156,11 @@ func UpdateGizmos(world *ecs.World) {
 	switch gizmo.DragMode {
 	case render.GizmoTranslate:
 		delta := tDelta * gizmo.AxisWorldLengthDrag
+		newWorld := startWorld.Add(axisWorld.Mul(delta))
+		newLocal := worldToLocalTranslation(world, target, newWorld)
 		applyLocalGizmo(world, target, func(t *transform.LocalTransform) {
 			*t = gizmo.StartLocal
-			t.Translation[0] = gizmo.StartLocal.Translation[0] + axisWorld.X()*delta
-			t.Translation[1] = gizmo.StartLocal.Translation[1] + axisWorld.Y()*delta
-			t.Translation[2] = gizmo.StartLocal.Translation[2] + axisWorld.Z()*delta
+			t.Translation = newLocal
 		})
 	case render.GizmoScale:
 		factor := 1 + tDelta
@@ -192,6 +192,27 @@ func UpdateGizmos(world *ecs.World) {
 			t.Rotation = rotation.Mul(gizmo.StartLocal.Rotation).Normalize()
 		})
 	}
+}
+
+func worldToLocalTranslation(world *ecs.World, entity ecs.Entity, worldPos mgl32.Vec3) mgl32.Vec3 {
+	parent, hasParent := ecs.Get[transform.Parent](world, entity)
+	if !hasParent || parent.IsRoot {
+		return worldPos
+	}
+	parentGlobal, ok := ecs.Get[transform.GlobalTransform](world, parent.Entity)
+	if !ok {
+		return worldPos
+	}
+	parentMatrix := parentGlobal.Matrix
+	if ecs.Has[transform.IgnoreParentScale](world, entity) {
+		parentMatrix = transform.StripScale(parentMatrix)
+	}
+	if math.Abs(float64(parentMatrix.Det())) < 1e-12 {
+		return worldPos
+	}
+	inverse := parentMatrix.Inv()
+	homogeneous := inverse.Mul4x1(mgl32.Vec4{worldPos.X(), worldPos.Y(), worldPos.Z(), 1})
+	return mgl32.Vec3{homogeneous.X(), homogeneous.Y(), homogeneous.Z()}
 }
 
 func applyLocalGizmo(world *ecs.World, entity ecs.Entity, mutate func(*transform.LocalTransform)) {
