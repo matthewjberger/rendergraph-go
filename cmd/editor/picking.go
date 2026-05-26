@@ -36,7 +36,7 @@ func resetPickCycle(engine *ecs.World) {
 
 func handlePickResult(worlds app.Worlds, pickedID uint32) {
 	gizmo := *ecs.MustResource[*render.Gizmos](worlds.Engine)
-	if gizmo != nil && gizmo.Dragging {
+	if gizmo != nil && (gizmo.Dragging || gizmo.DraggingPlane) {
 		return
 	}
 	if worlds.UI != nil {
@@ -45,7 +45,7 @@ func handlePickResult(worlds app.Worlds, pickedID uint32) {
 			return
 		}
 	}
-	if gizmo != nil && gizmo.HoverAxis >= 0 {
+	if gizmo != nil && (gizmo.HoverAxis >= 0 || gizmo.HoverPlane >= 0) {
 		return
 	}
 	applySelection(worlds.Engine, pickedID)
