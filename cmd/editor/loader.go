@@ -40,12 +40,20 @@ func loadGltfBytes(engine *ecs.World, renderer *render.Renderer, label string, d
 
 func drainKhronosPending(worlds app.Worlds, renderer *render.Renderer) {
 	browser := *ecs.MustResource[*KhronosBrowser](worlds.Engine)
-	pending := browser.TakePending()
+	drainPendingModel(worlds, renderer, browser.TakePending(), "khronos")
+}
+
+func drainPolyhavenPending(worlds app.Worlds, renderer *render.Renderer) {
+	browser := *ecs.MustResource[*PolyhavenBrowser](worlds.Engine)
+	drainPendingModel(worlds, renderer, browser.TakePending(), "polyhaven")
+}
+
+func drainPendingModel(worlds app.Worlds, renderer *render.Renderer, pending *PendingModel, source string) {
 	if pending == nil {
 		return
 	}
-	if _, err := loadKhronosPending(worlds.Engine, renderer, pending); err != nil {
-		log.Printf("khronos load failed: %v", err)
+	if _, err := loadPendingModel(worlds.Engine, renderer, pending); err != nil {
+		log.Printf("%s load failed: %v", source, err)
 		return
 	}
 	if worlds.UI != nil {
@@ -53,7 +61,7 @@ func drainKhronosPending(worlds app.Worlds, renderer *render.Renderer) {
 	}
 }
 
-func loadKhronosPending(engine *ecs.World, renderer *render.Renderer, pending *PendingKhronos) ([]ecs.Entity, error) {
+func loadPendingModel(engine *ecs.World, renderer *render.Renderer, pending *PendingModel) ([]ecs.Entity, error) {
 	assets := ecs.MustResource[asset.MeshAssetsResource](engine).Assets
 	skinnedAssets := ecs.MustResource[asset.SkinnedMeshAssetsResource](engine).Assets
 	arrays := ecs.MustResource[asset.MaterialTextureArraysResource](engine).Arrays

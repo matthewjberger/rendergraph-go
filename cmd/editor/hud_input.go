@@ -273,7 +273,7 @@ func handleMenuItem(worlds app.Worlds, hud *HudHandles, entity ecs.Entity) bool 
 				(*ecs.MustResource[*KhronosBrowser](worlds.Engine)).EnsureLoaded()
 			}
 		case 1:
-			(*ecs.MustResource[*KhronosBrowser](worlds.Engine)).FetchRandom()
+			(*ecs.MustResource[*PolyhavenBrowser](worlds.Engine)).FetchRandom()
 		}
 		return true
 	}

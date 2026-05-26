@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"log"
-	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"sort"
@@ -40,8 +39,8 @@ type KhronosEntry struct {
 	GltfFolderFilename string
 }
 
-// PendingKhronos is a downloaded model awaiting upload on the main thread.
-type PendingKhronos struct {
+// PendingModel is a downloaded model awaiting upload on the main thread.
+type PendingModel struct {
 	DisplayName string
 	GltfBytes   []byte
 	Resources   map[string][]byte
@@ -49,13 +48,12 @@ type PendingKhronos struct {
 
 // KhronosBrowser fetches the Khronos glTF-Sample-Assets index and individual
 type KhronosBrowser struct {
-	mu         sync.Mutex
-	status     khronosIndexStatus
-	entries    []KhronosEntry
-	indexErr   string
-	pending    *PendingKhronos
-	loading    string
-	wantRandom bool
+	mu       sync.Mutex
+	status   khronosIndexStatus
+	entries  []KhronosEntry
+	indexErr string
+	pending  *PendingModel
+	loading  string
 }
 
 func NewKhronosBrowser() *KhronosBrowser {
@@ -102,43 +100,12 @@ func (b *KhronosBrowser) LoadingStatus() string {
 }
 
 // TakePending removes and returns a finished download, or nil if none is ready.
-func (b *KhronosBrowser) TakePending() *PendingKhronos {
+func (b *KhronosBrowser) TakePending() *PendingModel {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	pending := b.pending
 	b.pending = nil
 	return pending
-}
-
-// FetchRandom downloads a random asset, kicking off the index fetch first if it
-// has not loaded yet and deferring the pick until the index arrives.
-func (b *KhronosBrowser) FetchRandom() {
-	b.mu.Lock()
-	switch b.status {
-	case khronosIdle:
-		b.status = khronosLoading
-		b.wantRandom = true
-		b.mu.Unlock()
-		go b.fetchIndex()
-		return
-	case khronosLoading:
-		b.wantRandom = true
-		b.mu.Unlock()
-		return
-	case khronosFailed:
-		b.mu.Unlock()
-		return
-	}
-	entries := b.entries
-	b.mu.Unlock()
-	b.fetchRandomFrom(entries)
-}
-
-func (b *KhronosBrowser) fetchRandomFrom(entries []KhronosEntry) {
-	if len(entries) == 0 {
-		return
-	}
-	b.FetchEntry(entries[rand.IntN(len(entries))])
 }
 
 // FetchEntry begins downloading the given entry.
@@ -168,7 +135,7 @@ func (b *KhronosBrowser) clearLoading() {
 	b.mu.Unlock()
 }
 
-func (b *KhronosBrowser) publishPending(pending *PendingKhronos) {
+func (b *KhronosBrowser) publishPending(pending *PendingModel) {
 	b.mu.Lock()
 	b.pending = pending
 	b.loading = ""
@@ -176,7 +143,7 @@ func (b *KhronosBrowser) publishPending(pending *PendingKhronos) {
 }
 
 func (b *KhronosBrowser) fetchIndex() {
-	data, ok := khronosHTTPGet(khronosIndexURL)
+	data, ok := httpGetBytes(khronosIndexURL)
 	if !ok {
 		b.failIndex("fetch index")
 		return
@@ -190,12 +157,7 @@ func (b *KhronosBrowser) fetchIndex() {
 	b.mu.Lock()
 	b.entries = entries
 	b.status = khronosLoaded
-	wantRandom := b.wantRandom
-	b.wantRandom = false
 	b.mu.Unlock()
-	if wantRandom {
-		b.fetchRandomFrom(entries)
-	}
 }
 
 func (b *KhronosBrowser) failIndex(message string) {
@@ -210,12 +172,12 @@ func (b *KhronosBrowser) startGlbFetch(displayName, glbURL string) {
 		return
 	}
 	go func() {
-		data, ok := khronosHTTPGet(glbURL)
+		data, ok := httpGetBytes(glbURL)
 		if !ok {
 			b.clearLoading()
 			return
 		}
-		b.publishPending(&PendingKhronos{DisplayName: displayName, GltfBytes: data})
+		b.publishPending(&PendingModel{DisplayName: displayName, GltfBytes: data})
 	}()
 }
 
@@ -226,7 +188,7 @@ func (b *KhronosBrowser) startGltfFolderFetch(assetName, displayName, gltfFilena
 	folderURL := khronosBaseURL + "/" + assetName + "/glTF"
 	gltfURL := folderURL + "/" + gltfFilename
 	go func() {
-		gltfBytes, ok := khronosHTTPGet(gltfURL)
+		gltfBytes, ok := httpGetBytes(gltfURL)
 		if !ok {
 			b.clearLoading()
 			return
@@ -234,7 +196,7 @@ func (b *KhronosBrowser) startGltfFolderFetch(assetName, displayName, gltfFilena
 		uris := externalURIsFromGltf(gltfBytes)
 		resources := make(map[string][]byte, len(uris))
 		for _, uri := range uris {
-			data, got := khronosHTTPGet(folderURL + "/" + uri)
+			data, got := httpGetBytes(folderURL + "/" + uri)
 			if !got {
 				b.clearLoading()
 				return
@@ -245,7 +207,7 @@ func (b *KhronosBrowser) startGltfFolderFetch(assetName, displayName, gltfFilena
 			}
 			resources[key] = data
 		}
-		b.publishPending(&PendingKhronos{
+		b.publishPending(&PendingModel{
 			DisplayName: displayName,
 			GltfBytes:   gltfBytes,
 			Resources:   resources,
@@ -300,20 +262,20 @@ func externalURIsFromGltf(gltfBytes []byte) []string {
 	return uris
 }
 
-func khronosHTTPGet(target string) ([]byte, bool) {
+func httpGetBytes(target string) ([]byte, bool) {
 	resp, err := http.Get(target)
 	if err != nil {
-		log.Printf("khronos: get %s: %v", target, err)
+		log.Printf("http get %s: %v", target, err)
 		return nil, false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("khronos: get %s: HTTP %d", target, resp.StatusCode)
+		log.Printf("http get %s: HTTP %d", target, resp.StatusCode)
 		return nil, false
 	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("khronos: read %s: %v", target, err)
+		log.Printf("http read %s: %v", target, err)
 		return nil, false
 	}
 	return data, true

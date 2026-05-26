@@ -46,6 +46,7 @@ func buildWorlds(renderer *render.Renderer) (app.Worlds, *app.App) {
 
 	ecs.Register[Spinner](worlds.Game)
 	ecs.SetResource(engine, NewKhronosBrowser())
+	ecs.SetResource(engine, NewPolyhavenBrowser())
 	ecs.SetResource(engine, buildHud(worlds.UI))
 
 	worlds.EngineSchedule.Push("graphics_toggles", render.UpdateGraphicsToggles)
