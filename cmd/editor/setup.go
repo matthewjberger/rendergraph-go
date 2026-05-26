@@ -121,6 +121,7 @@ func editorApp() *app.App {
 				{"lines", func() error { _, err := pass.AddLinesPass(renderer); return err }},
 				{"outline", func() error { _, err := pass.AddOutlinePass(renderer); return err }},
 				{"ssao", func() error { _, _, err := pass.AddSsaoPass(renderer, renderer.AspectRatio); return err }},
+				{"ssr", func() error { _, _, err := pass.AddSsrPass(renderer, renderer.AspectRatio); return err }},
 				{"oit_mesh", func() error { _, err := pass.AddOitMeshPass(renderer); return err }},
 				{"skinned_mesh_oit", func() error { _, err := pass.AddSkinnedMeshOitPass(renderer); return err }},
 				{"oit_composite", func() error { _, err := pass.AddOitCompositePass(renderer); return err }},

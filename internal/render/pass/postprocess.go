@@ -23,6 +23,10 @@ type postprocessUniform struct {
 	AutoExposureTarget   float32
 	AutoExposureMinScale float32
 	AutoExposureMaxScale float32
+	SsrEnabled           float32
+	_                    float32
+	_                    float32
+	_                    float32
 }
 
 type postprocessPassState struct {
@@ -35,6 +39,7 @@ type postprocessPassState struct {
 	dummyTexture            *wgpu.Texture
 	dummyView               *wgpu.TextureView
 	lastSsaoView            *wgpu.TextureView
+	lastSsrView             *wgpu.TextureView
 	dummyAutoExposureBuffer *wgpu.Buffer
 	lastAutoExposureBuf     *wgpu.Buffer
 }
@@ -127,6 +132,14 @@ func NewPostProcessPass(device *wgpu.Device, surfaceFormat wgpu.TextureFormat, b
 				Binding:    7,
 				Visibility: wgpu.ShaderStageFragment,
 				Buffer:     wgpu.BufferBindingLayout{Type: wgpu.BufferBindingTypeUniform},
+			},
+			{
+				Binding:    8,
+				Visibility: wgpu.ShaderStageFragment,
+				Texture: wgpu.TextureBindingLayout{
+					SampleType:    wgpu.TextureSampleTypeFloat,
+					ViewDimension: wgpu.TextureViewDimension2D,
+				},
 			},
 		},
 	})
@@ -243,6 +256,15 @@ func postprocessPrepare(state *postprocessPassState, context *render.PassContext
 		ssaoEnabled = 1.0
 	}
 
+	ssrView := state.dummyView
+	ssrEnabled := float32(0.0)
+	if settings.Ssr.Enabled {
+		if resource, ok := ecs.Resource[SsrResource](context.World); ok && resource != nil && resource.Result != nil && resource.Result.View != nil {
+			ssrView = resource.Result.View
+			ssrEnabled = 1.0
+		}
+	}
+
 	autoExposureCfg := DefaultAutoExposureSettings()
 	if cfg, ok := ecs.Resource[AutoExposureSettings](context.World); ok && cfg != nil {
 		autoExposureCfg = *cfg
@@ -265,6 +287,7 @@ func postprocessPrepare(state *postprocessPassState, context *render.PassContext
 		AutoExposureTarget:   autoExposureCfg.TargetLuminance,
 		AutoExposureMinScale: autoExposureCfg.MinScale,
 		AutoExposureMaxScale: autoExposureCfg.MaxScale,
+		SsrEnabled:           ssrEnabled,
 	}
 	writeBuffer(context.Device, context.Queue, context.Encoder, state.uniformBuffer, 0, bytesOf(&uniform))
 
@@ -273,7 +296,7 @@ func postprocessPrepare(state *postprocessPassState, context *render.PassContext
 		autoExposureBuf = autoExposureBufferRef
 	}
 
-	if state.bindGroup != nil && state.lastSsaoView == ssaoView && state.lastAutoExposureBuf == autoExposureBuf {
+	if state.bindGroup != nil && state.lastSsaoView == ssaoView && state.lastSsrView == ssrView && state.lastAutoExposureBuf == autoExposureBuf {
 		return nil
 	}
 	if state.bindGroup != nil {
@@ -281,6 +304,7 @@ func postprocessPrepare(state *postprocessPassState, context *render.PassContext
 		state.bindGroup = nil
 	}
 	state.lastSsaoView = ssaoView
+	state.lastSsrView = ssrView
 	state.lastAutoExposureBuf = autoExposureBuf
 
 	inputView, err := context.TextureView("input")
@@ -300,6 +324,7 @@ func postprocessPrepare(state *postprocessPassState, context *render.PassContext
 			{Binding: 5, TextureView: ssaoView},
 			{Binding: 6, Sampler: state.sampler},
 			{Binding: 7, Buffer: autoExposureBuf, Offset: 0, Size: uint64(unsafe.Sizeof(autoExposureBuffer{}))},
+			{Binding: 8, TextureView: ssrView},
 		},
 	})
 	if err != nil {

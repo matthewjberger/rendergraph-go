@@ -32,7 +32,18 @@ type Graphics struct {
 
 	Cull Cull
 
+	Ssr Ssr
+
 	Lines DebugLines
+}
+
+type Ssr struct {
+	Enabled     bool
+	MaxSteps    uint32
+	Thickness   float32
+	MaxDistance float32
+	Stride      float32
+	Intensity   float32
 }
 
 type Bloom struct {
@@ -85,6 +96,14 @@ func DefaultGraphics() Graphics {
 		Cull: Cull{
 			Enabled:            true,
 			MinScreenPixelSize: 1.0,
+		},
+		Ssr: Ssr{
+			Enabled:     false,
+			MaxSteps:    64,
+			Thickness:   0.3,
+			MaxDistance: 50.0,
+			Stride:      1.0,
+			Intensity:   1.0,
 		},
 		Lines: DebugLines{
 			NormalLength:       0.08,

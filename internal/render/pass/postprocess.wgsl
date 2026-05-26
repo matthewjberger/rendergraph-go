@@ -8,6 +8,10 @@ struct Uniform {
     auto_exposure_target: f32,
     auto_exposure_min_scale: f32,
     auto_exposure_max_scale: f32,
+    ssr_enabled: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 struct AutoExposureBuffer {
@@ -29,6 +33,7 @@ struct AutoExposureBuffer {
 @group(0) @binding(5) var ssao_texture: texture_2d<f32>;
 @group(0) @binding(6) var ssao_sampler: sampler;
 @group(0) @binding(7) var<uniform> auto_exposure: AutoExposureBuffer;
+@group(0) @binding(8) var ssr_texture: texture_2d<f32>;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -71,6 +76,12 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if u.ssao_enabled > 0.5 {
         let ao = textureSample(ssao_texture, ssao_sampler, in.uv).r;
         color = color * ao;
+    }
+    if u.ssr_enabled > 0.5 {
+        let ssr = textureSample(ssr_texture, hdr_sampler, in.uv);
+        if ssr.a > 0.001 {
+            color = mix(color, ssr.rgb / ssr.a, ssr.a);
+        }
     }
     if u.bloom_enabled > 0.5 {
         let bloom = textureSample(bloom_texture, bloom_sampler, in.uv).rgb;
