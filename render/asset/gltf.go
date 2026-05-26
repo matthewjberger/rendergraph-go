@@ -29,14 +29,15 @@ import (
 )
 
 type LoadedScene struct {
-	Label      string
-	Nodes      []SceneNode
-	Roots      []int
-	Meshes     []LoadedMesh
-	Materials  []Material
-	Animations []AnimationClip
-	Lights     []LoadedLight
-	Cameras    []LoadedCamera
+	Label        string
+	Nodes        []SceneNode
+	Roots        []int
+	Meshes       []LoadedMesh
+	Materials    []Material
+	VariantNames []string
+	Animations   []AnimationClip
+	Lights       []LoadedLight
+	Cameras      []LoadedCamera
 
 	SkinSpecs []SkinSpec
 
@@ -89,6 +90,7 @@ type SceneNode struct {
 	HasMesh          bool
 	MorphTargetCount uint32
 	Material         Material
+	Variants         *MaterialVariants
 	ChildPrimitives  []SceneNodePrimitive
 
 	SkinIndex int
@@ -112,6 +114,7 @@ type SceneNodeSkinnedPrimitive struct {
 type SceneNodePrimitive struct {
 	Mesh             MeshHandle
 	Material         Material
+	Variants         *MaterialVariants
 	MorphTargetCount uint32
 }
 
@@ -177,12 +180,14 @@ func LoadGltfReaderOpts(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAsse
 		materials[i] = buildMaterial(doc.Materials[i], textureLayers)
 	}
 	scene.Materials = materials
+	scene.VariantNames = readVariantNames(doc)
 
 	type primitiveResult struct {
 		Handle        MeshHandle
 		SkinnedHandle SkinnedMeshHandle
 		Skinned       bool
 		Material      Material
+		Variants      *MaterialVariants
 	}
 	meshPrimitives := make([][]primitiveResult, len(doc.Meshes))
 	for meshIdx, mesh := range doc.Meshes {
@@ -199,6 +204,7 @@ func LoadGltfReaderOpts(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAsse
 			if prim.Material != nil {
 				material = materials[*prim.Material]
 			}
+			variants := readPrimitiveVariants(prim, materials, scene.VariantNames, material)
 			if _, hasJoints := prim.Attributes["JOINTS_0"]; hasJoints && skinnedAssets != nil {
 				vertices, err := buildSkinnedGltfPrimitive(doc, prim)
 				if err != nil {
@@ -212,7 +218,7 @@ func LoadGltfReaderOpts(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAsse
 				if err != nil {
 					return nil, err
 				}
-				results = append(results, primitiveResult{SkinnedHandle: handle, Skinned: true, Material: material})
+				results = append(results, primitiveResult{SkinnedHandle: handle, Skinned: true, Material: material, Variants: variants})
 				continue
 			}
 			vertices, err := buildGltfPrimitive(doc, prim)
@@ -227,7 +233,7 @@ func LoadGltfReaderOpts(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAsse
 			if err != nil {
 				return nil, err
 			}
-			results = append(results, primitiveResult{Handle: handle, Material: material})
+			results = append(results, primitiveResult{Handle: handle, Material: material, Variants: variants})
 			scene.Meshes = append(scene.Meshes, LoadedMesh{Handle: handle, Name: name})
 		}
 		meshPrimitives[meshIdx] = results
@@ -277,7 +283,7 @@ func LoadGltfReaderOpts(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAsse
 					skinnedPrims = append(skinnedPrims, SceneNodeSkinnedPrimitive{Mesh: p.SkinnedHandle, Material: p.Material})
 				} else {
 					_, morphCount := assets.MorphInfo(p.Handle)
-					staticPrims = append(staticPrims, SceneNodePrimitive{Mesh: p.Handle, Material: p.Material, MorphTargetCount: morphCount})
+					staticPrims = append(staticPrims, SceneNodePrimitive{Mesh: p.Handle, Material: p.Material, Variants: p.Variants, MorphTargetCount: morphCount})
 				}
 			}
 			switch {
@@ -285,6 +291,7 @@ func LoadGltfReaderOpts(device *wgpu.Device, queue *wgpu.Queue, assets *MeshAsse
 				out.HasMesh = true
 				out.Mesh = staticPrims[0].Mesh
 				out.Material = staticPrims[0].Material
+				out.Variants = staticPrims[0].Variants
 				if _, count := assets.MorphInfo(staticPrims[0].Mesh); count > 0 {
 					out.MorphTargetCount = count
 				}
@@ -341,6 +348,7 @@ func SpawnLoadedScene(world *ecs.World, scene *LoadedScene, device *wgpu.Device)
 	meshMask := ecs.MustMaskOf[RenderMesh](world)
 	skinnedMeshMask := ecs.MustMaskOf[SkinnedMesh](world)
 	materialMask := ecs.MustMaskOf[Material](world)
+	variantsMask := ecs.MustMaskOf[MaterialVariants](world)
 	morphMask := ecs.MustMaskOf[MorphWeights](world)
 
 	transformMask := localMask | globalMask | dirtyMask
@@ -388,6 +396,10 @@ func SpawnLoadedScene(world *ecs.World, scene *LoadedScene, device *wgpu.Device)
 			world.AddComponents(entity, meshMask|materialMask)
 			ecs.Set(world, entity, RenderMesh{Mesh: node.Mesh})
 			ecs.Set(world, entity, node.Material)
+			if node.Variants != nil {
+				world.AddComponents(entity, variantsMask)
+				ecs.Set(world, entity, *node.Variants)
+			}
 			if node.MorphTargetCount > 0 {
 				world.AddComponents(entity, morphMask)
 				ecs.Set(world, entity, MorphWeights{Weights: make([]float32, node.MorphTargetCount)})
@@ -412,6 +424,10 @@ func SpawnLoadedScene(world *ecs.World, scene *LoadedScene, device *wgpu.Device)
 			ecs.Set(world, child, transform.Parent{Entity: entity})
 			ecs.Set(world, child, RenderMesh{Mesh: prim.Mesh})
 			ecs.Set(world, child, prim.Material)
+			if prim.Variants != nil {
+				world.AddComponents(child, variantsMask)
+				ecs.Set(world, child, *prim.Variants)
+			}
 			if prim.MorphTargetCount > 0 {
 				world.AddComponents(child, morphMask)
 				ecs.Set(world, child, MorphWeights{Weights: make([]float32, prim.MorphTargetCount)})
